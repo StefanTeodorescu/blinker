@@ -1,0 +1,1 @@
+require 'blinker/framework/challenges'

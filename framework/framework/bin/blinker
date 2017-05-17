@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+
+require 'securerandom'
+
+require 'blinker/framework'
+
+dir = ENV['BLINKER_CHALLENGES_DIR'] || File.absolute_path(File.join(__dir__, '/../../challenges'))
+
+unless Dir.exists? dir
+  puts "Challenge directory does not exist: #{dir}"
+  puts "You can override it with the BLINKER_CHALLENGES_DIR environment variable."
+  puts "Usage: #{$0} challenge-name"
+  exit 1
+end
+
+challenges = Blinker::Framework::Challenges.new dir
+
+debug = ENV['BLINKER_DEBUG'] && ENV['BLINKER_DEBUG'].to_i > 0
+
+unless ARGV.length == 1
+  puts "Usage: #{$0} challenge-name
+
+Where challenge-name is one of:
+"
+  challenges.names.each { |chall| puts " * #{chall}" }
+  exit 1
+end
+
+status = challenges.generate ARGV.first, SecureRandom.hex(16), debug: debug
+
+case status[:status]
+when :done
+  puts 'Challenge generation successful'
+  puts "Handout: #{File.join(status[:dir],status[:handout])}" if status[:handout]
+  puts "Deployable: #{File.join(status[:dir],status[:deploy])}" if status[:deploy]
+  puts "Flag: #{status[:flag]}"
+when :started
+  puts 'Challenge generation was prematurely terminated without signaling an error condition'
+  puts "Build directory: #{status[:dir]}"
+when :exception
+  puts 'Challenge generation failed'
+  puts "Reason: #{status[:message]}"
+  puts "Build directory: #{status[:dir]}"
+  puts "Backtrace:"
+  status[:backtrace].each { |line| puts "\t#{line}" }
+else
+  puts 'Failed to interpret challenge generation status file'
+end

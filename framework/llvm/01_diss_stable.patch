@@ -1,0 +1,1378 @@
+diff --git a/blinker-randomizer/CMakeLists.txt b/blinker-randomizer/CMakeLists.txt
+new file mode 100644
+index 00000000..6cd8cf05
+--- /dev/null
++++ b/blinker-randomizer/CMakeLists.txt
+@@ -0,0 +1,7 @@
++add_llvm_loadable_module( LLVMBlinker
++  ReorderFunctionsPass.cpp
++  ReorderGlobalVariablesPass.cpp
++
++  PLUGIN_TOOL
++  opt
++  )
+diff --git a/blinker-randomizer/ReorderFunctionsPass.cpp b/blinker-randomizer/ReorderFunctionsPass.cpp
+new file mode 100644
+index 00000000..0dca1ce9
+--- /dev/null
++++ b/blinker-randomizer/ReorderFunctionsPass.cpp
+@@ -0,0 +1,23 @@
++#include "llvm/Pass.h"
++#include "llvm/IR/Module.h"
++#include "llvm/IR/Function.h"
++
++#include "SymbolTableListReordering.h"
++
++using namespace llvm;
++
++namespace {
++  struct ReorderFunctionsPass : public ModulePass {
++    static char ID;
++    ReorderFunctionsPass() : ModulePass(ID) {}
++
++    bool runOnModule(Module &M) override {
++      reorderSymbolTableList<Function>(M.getFunctionList());
++
++      return false;
++    }
++  };
++}
++
++char ReorderFunctionsPass::ID = 0;
++static RegisterPass<ReorderFunctionsPass> X("reorder-functions", "Reorder Functions Pass (blinker)");
+diff --git a/blinker-randomizer/ReorderGlobalVariablesPass.cpp b/blinker-randomizer/ReorderGlobalVariablesPass.cpp
+new file mode 100644
+index 00000000..6718d585
+--- /dev/null
++++ b/blinker-randomizer/ReorderGlobalVariablesPass.cpp
+@@ -0,0 +1,23 @@
++#include "llvm/Pass.h"
++#include "llvm/IR/Module.h"
++#include "llvm/IR/GlobalVariable.h"
++
++#include "SymbolTableListReordering.h"
++
++using namespace llvm;
++
++namespace {
++  struct ReorderGlobalVariablesPass : public ModulePass {
++    static char ID;
++    ReorderGlobalVariablesPass() : ModulePass(ID) {}
++
++    bool runOnModule(Module &M) override {
++      reorderSymbolTableList<GlobalVariable>(M.getGlobalList());
++
++      return false;
++    }
++  };
++}
++
++char ReorderGlobalVariablesPass::ID = 0;
++static RegisterPass<ReorderGlobalVariablesPass> X("reorder-globals", "Reorder Global Variables Pass (blinker)");
+diff --git a/blinker-randomizer/SymbolTableListReordering.h b/blinker-randomizer/SymbolTableListReordering.h
+new file mode 100644
+index 00000000..4ef9fa68
+--- /dev/null
++++ b/blinker-randomizer/SymbolTableListReordering.h
+@@ -0,0 +1,24 @@
++#include <random>
++#include <chrono>
++
++#include "llvm/IR/SymbolTableListTraits.h"
++
++template <typename ListEl>
++static void reorderSymbolTableList(llvm::SymbolTableList<ListEl> &List) {
++  std::mt19937 Prng;
++  Prng.seed(std::chrono::system_clock::now().time_since_epoch().count());
++
++  // This is awkward, but llvm::SymbolTableList does not support random access
++  // iterators
++  for (int i = List.size(); i > 0; i--) {
++    std::uniform_int_distribution<int> Rand(0, i - 1);
++    int j = Rand(Prng);
++    auto from = --List.end();
++
++    // Let's pretend we have random access iterators...
++    for (int k = 0; k < j; k++)
++      from--;
++
++    List.splice(List.begin(), List, from);
++  }
++}
+diff --git a/debug_build.sh b/debug_build.sh
+new file mode 100755
+index 00000000..b89c9db7
+--- /dev/null
++++ b/debug_build.sh
+@@ -0,0 +1,16 @@
++#!/bin/bash -xe
++
++SELF=$(readlink -f "$0")
++SELFDIR=$(dirname "$SELF")
++
++mkdir -p install build
++
++cd build
++cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="../install" -DLLVM_TARGETS_TO_BUILD="X86" -DCMAKE_BUILD_TYPE="Debug" -DENABLE_ASSERTIONS="OFF" -DLLVM_BUILD_LLVM_DYLIB="ON" -DLLVM_LINK_LLVM_DYLIB="ON" "$SELFDIR/llvm-4.0.0.src"
++make
++make install
++
++cd ../install
++
++tar --exclude='./lib/*.a' -cf ../blinker-debug.tar *
++gzip ../blinker-debug.tar
+diff --git a/lld-4.0.0.src/ELF/Config.h b/lld-4.0.0.src/ELF/Config.h
+index b7706205..19544fb4 100644
+--- a/lld-4.0.0.src/ELF/Config.h
++++ b/lld-4.0.0.src/ELF/Config.h
+@@ -119,6 +119,9 @@ struct Configuration {
+   bool Pic;
+   bool Pie;
+   bool PrintGcSections;
++  bool RandomizeGotPlt;
++  bool RandomizePlt;
++  bool RandomSeedGiven;
+   bool Rela;
+   bool Relocatable;
+   bool SaveTemps;
+@@ -156,6 +159,7 @@ struct Configuration {
+   unsigned LTOPartitions;
+   unsigned LTOO;
+   unsigned Optimize;
++  unsigned RandomSeed;
+   unsigned ThinLTOJobs;
+ };
+ 
+diff --git a/lld-4.0.0.src/ELF/Driver.cpp b/lld-4.0.0.src/ELF/Driver.cpp
+index 50b70117..4264694e 100644
+--- a/lld-4.0.0.src/ELF/Driver.cpp
++++ b/lld-4.0.0.src/ELF/Driver.cpp
+@@ -32,6 +32,8 @@
+ #include "llvm/Support/raw_ostream.h"
+ #include <cstdlib>
+ #include <utility>
++#include <random>
++#include <ctime>
+ 
+ using namespace llvm;
+ using namespace llvm::ELF;
+@@ -308,6 +310,12 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
+   }
+ 
+   readConfigs(Args);
++
++  if (Config->RandomSeedGiven)
++    std::srand(Config->RandomSeed);
++  else
++    std::srand(unsigned(std::time(0)));
++
+   initLLVM(Args);
+   createFiles(Args);
+   inferMachineType();
+@@ -495,6 +503,9 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
+   Config->OMagic = Args.hasArg(OPT_omagic);
+   Config->Pie = getArg(Args, OPT_pie, OPT_nopie, false);
+   Config->PrintGcSections = Args.hasArg(OPT_print_gc_sections);
++  Config->RandomizeGotPlt = Args.hasArg(OPT_randomize_got_plt);
++  Config->RandomizePlt = Args.hasArg(OPT_randomize_plt);
++  Config->RandomSeedGiven = Args.hasArg(OPT_random_seed);
+   Config->Relocatable = Args.hasArg(OPT_relocatable);
+   Config->DefineCommon = getArg(Args, OPT_define_common, OPT_no_define_common,
+                                 !Config->Relocatable);
+@@ -525,6 +536,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
+   Config->LTOPartitions = getInteger(Args, OPT_lto_partitions, 1);
+   if (Config->LTOPartitions == 0)
+     error("--lto-partitions: number of threads must be > 0");
++  Config->RandomSeed = getInteger(Args, OPT_random_seed, 0);
+   Config->ThinLTOJobs = getInteger(Args, OPT_thinlto_jobs, -1u);
+   if (Config->ThinLTOJobs == 0)
+     error("--thinlto-jobs: number of threads must be > 0");
+diff --git a/lld-4.0.0.src/ELF/Future.h b/lld-4.0.0.src/ELF/Future.h
+new file mode 100644
+index 00000000..b0e10abb
+--- /dev/null
++++ b/lld-4.0.0.src/ELF/Future.h
+@@ -0,0 +1,81 @@
++#ifndef LLD_ELF_FUTURE_H
++#define LLD_ELF_FUTURE_H
++
++#include <cassert>
++
++namespace lld {
++namespace elf {
++
++template <class V> class Future {
++public:
++  virtual V get() const = 0;
++  virtual bool available() const = 0;
++};
++
++template <class V> class SimpleFuture : public Future<V> {
++public:
++  SimpleFuture(V Value) : Marked(false), Available(true), Value(Value) {}
++  SimpleFuture() : Marked(false), Available(false) {}
++  SimpleFuture(SimpleFuture&) = delete;
++
++  SimpleFuture& operator=(SimpleFuture&) = delete;
++
++  void determine(V Value);
++  V get() const;
++  bool available() const;
++
++  bool marked() const;
++  void mark();
++private:
++  bool Marked;
++  bool Available;
++  V Value;
++};
++
++template <class V> void SimpleFuture<V>::determine(V Value) {
++  Available = true;
++  this->Value = Value;
++}
++
++template <class V> V SimpleFuture<V>::get() const {
++  assert(Available);
++  return Value;
++}
++
++template <class V> bool SimpleFuture<V>::available() const {
++  return Available;
++}
++
++template <class V> bool SimpleFuture<V>::marked() const {
++  return Marked;
++}
++
++template <class V> void SimpleFuture<V>::mark() {
++  assert(!Marked);
++  Marked = true;
++}
++
++template <class S, class V> class BindFuture : public Future<V> {
++public:
++  BindFuture(const Future<S>& Source, std::function<V (S)> Computation)
++    : Source(Source), Computation(Computation) {}
++
++  V get() const;
++  bool available() const;
++private:
++  const Future<S>& Source;
++  std::function<V (S)> Computation;
++};
++
++template <class S, class V> V BindFuture<S, V>::get() const {
++  return Computation(Source.get());
++}
++
++template <class S, class V> bool BindFuture<S, V>::available() const {
++  return Source.available();
++}
++
++}
++}
++
++#endif
+diff --git a/lld-4.0.0.src/ELF/Options.td b/lld-4.0.0.src/ELF/Options.td
+index 77ed4c7e..cf0a39b9 100644
+--- a/lld-4.0.0.src/ELF/Options.td
++++ b/lld-4.0.0.src/ELF/Options.td
+@@ -178,6 +178,15 @@ def pie: F<"pie">, HelpText<"Create a position independent executable">;
+ def print_gc_sections: F<"print-gc-sections">,
+   HelpText<"List removed unused sections">;
+ 
++def random_seed: S<"random-seed">,
++  HelpText<"Specify the initial seed for the PRNG used during linking">;
++
++def randomize_got_plt: F<"randomize-got-plt">,
++  HelpText<"Randomize the order of PLT-related entries in the Global Offset Table">;
++
++def randomize_plt: F<"randomize-plt">,
++  HelpText<"Randomize the order of the stubs in the Procedure Linkage Table">;
++
+ def reproduce: S<"reproduce">,
+   HelpText<"Dump linker invocation and input files for debugging">;
+ 
+diff --git a/lld-4.0.0.src/ELF/Relocations.cpp b/lld-4.0.0.src/ELF/Relocations.cpp
+index cecd11e9..e05d4959 100644
+--- a/lld-4.0.0.src/ELF/Relocations.cpp
++++ b/lld-4.0.0.src/ELF/Relocations.cpp
+@@ -743,15 +743,17 @@ static void scanRelocs(InputSectionBase<ELFT> &C, ArrayRef<RelTy> Rels) {
+       if (Body.isGnuIFunc() && !Preemptible) {
+         In<ELFT>::Iplt->addEntry(Body);
+         In<ELFT>::IgotPlt->addEntry(Body);
+-        In<ELFT>::RelaIplt->addReloc({Target->IRelativeRel, In<ELFT>::IgotPlt,
+-                                      Body.getGotPltOffset<ELFT>(),
+-                                      !Preemptible, &Body, 0});
++        DynamicReloc<ELFT> reloc(Target->IRelativeRel, In<ELFT>::IgotPlt,
++                                 Body.getGotPltOffsetFuture<ELFT>(),
++                                 !Preemptible, &Body, 0);
++        In<ELFT>::RelaIplt->addReloc(std::move(reloc));
+       } else {
+         In<ELFT>::Plt->addEntry(Body);
+         In<ELFT>::GotPlt->addEntry(Body);
+-        In<ELFT>::RelaPlt->addReloc({Target->PltRel, In<ELFT>::GotPlt,
+-                                     Body.getGotPltOffset<ELFT>(), !Preemptible,
+-                                     &Body, 0});
++        DynamicReloc<ELFT> reloc(Target->PltRel, In<ELFT>::GotPlt,
++                                 Body.getGotPltOffsetFuture<ELFT>(), !Preemptible,
++                                 &Body, 0);
++        In<ELFT>::RelaPlt->addReloc(std::move(reloc));
+       }
+       continue;
+     }
+diff --git a/lld-4.0.0.src/ELF/Symbols.cpp b/lld-4.0.0.src/ELF/Symbols.cpp
+index 43af44ec..5a198c9d 100644
+--- a/lld-4.0.0.src/ELF/Symbols.cpp
++++ b/lld-4.0.0.src/ELF/Symbols.cpp
+@@ -161,14 +161,24 @@ template <class ELFT> typename ELFT::uint SymbolBody::getGotPltVA() const {
+ }
+ 
+ template <class ELFT> typename ELFT::uint SymbolBody::getGotPltOffset() const {
+-  return GotPltIndex * Target->GotPltEntrySize;
++  return GotPltIndexFuture.get() * Target->GotPltEntrySize;
++}
++
++template <class ELFT>
++std::unique_ptr<Future<typename ELFT::uint>>
++  SymbolBody::getGotPltOffsetFuture() const {
++  auto future = new BindFuture<uint32_t, typename ELFT::uint>(GotPltIndexFuture,
++    [=](uint32_t idx) { return idx * Target->GotPltEntrySize; });
++  return std::unique_ptr<BindFuture<uint32_t, typename ELFT::uint>>(
++    std::move(future));
+ }
+ 
+ template <class ELFT> typename ELFT::uint SymbolBody::getPltVA() const {
+   if (this->IsInIplt)
+-    return In<ELFT>::Iplt->getVA() + PltIndex * Target->PltEntrySize;
++    return In<ELFT>::Iplt->getVA() +
++      PltIndexFuture.get() * Target->PltEntrySize;
+   return In<ELFT>::Plt->getVA() + Target->PltHeaderSize +
+-         PltIndex * Target->PltEntrySize;
++    PltIndexFuture.get() * Target->PltEntrySize;
+ }
+ 
+ template <class ELFT> typename ELFT::uint SymbolBody::getThunkVA() const {
+@@ -373,6 +383,15 @@ template uint32_t SymbolBody::template getGotPltOffset<ELF32BE>() const;
+ template uint64_t SymbolBody::template getGotPltOffset<ELF64LE>() const;
+ template uint64_t SymbolBody::template getGotPltOffset<ELF64BE>() const;
+ 
++template std::unique_ptr<Future<uint32_t>>
++SymbolBody::template getGotPltOffsetFuture<ELF32LE>() const;
++template std::unique_ptr<Future<uint32_t>>
++SymbolBody::template getGotPltOffsetFuture<ELF32BE>() const;
++template std::unique_ptr<Future<uint64_t>>
++SymbolBody::template getGotPltOffsetFuture<ELF64LE>() const;
++template std::unique_ptr<Future<uint64_t>>
++SymbolBody::template getGotPltOffsetFuture<ELF64BE>() const;
++
+ template uint32_t SymbolBody::template getPltVA<ELF32LE>() const;
+ template uint32_t SymbolBody::template getPltVA<ELF32BE>() const;
+ template uint64_t SymbolBody::template getPltVA<ELF64LE>() const;
+diff --git a/lld-4.0.0.src/ELF/Symbols.h b/lld-4.0.0.src/ELF/Symbols.h
+index 7acb89ad..cdc5f3e6 100644
+--- a/lld-4.0.0.src/ELF/Symbols.h
++++ b/lld-4.0.0.src/ELF/Symbols.h
+@@ -17,6 +17,7 @@
+ 
+ #include "InputSection.h"
+ #include "Strings.h"
++#include "Future.h"
+ 
+ #include "lld/Core/LLVM.h"
+ #include "llvm/Object/Archive.h"
+@@ -75,7 +76,7 @@ public:
+   void parseSymbolVersion();
+ 
+   bool isInGot() const { return GotIndex != -1U; }
+-  bool isInPlt() const { return PltIndex != -1U; }
++  bool isInPlt() const { return PltIndexFuture.marked(); }
+   template <class ELFT> bool hasThunk() const;
+ 
+   template <class ELFT>
+@@ -84,6 +85,8 @@ public:
+   template <class ELFT> typename ELFT::uint getGotOffset() const;
+   template <class ELFT> typename ELFT::uint getGotVA() const;
+   template <class ELFT> typename ELFT::uint getGotPltOffset() const;
++  template <class ELFT> std::unique_ptr<Future<typename ELFT::uint>>
++    getGotPltOffsetFuture() const;
+   template <class ELFT> typename ELFT::uint getGotPltVA() const;
+   template <class ELFT> typename ELFT::uint getPltVA() const;
+   template <class ELFT> typename ELFT::uint getThunkVA() const;
+@@ -94,8 +97,8 @@ public:
+ 
+   uint32_t DynsymIndex = 0;
+   uint32_t GotIndex = -1;
+-  uint32_t GotPltIndex = -1;
+-  uint32_t PltIndex = -1;
++  SimpleFuture<uint32_t> GotPltIndexFuture;
++  SimpleFuture<uint32_t> PltIndexFuture;
+   uint32_t GlobalDynIndex = -1;
+ 
+ protected:
+diff --git a/lld-4.0.0.src/ELF/SyntheticSections.cpp b/lld-4.0.0.src/ELF/SyntheticSections.cpp
+index b673a4ec..0b7a442b 100644
+--- a/lld-4.0.0.src/ELF/SyntheticSections.cpp
++++ b/lld-4.0.0.src/ELF/SyntheticSections.cpp
+@@ -34,6 +34,8 @@
+ #include "llvm/Support/SHA1.h"
+ #include "llvm/Support/xxhash.h"
+ #include <cstdlib>
++#include <algorithm>
++#include <random>
+ 
+ using namespace llvm;
+ using namespace llvm::dwarf;
+@@ -698,7 +700,6 @@ GotPltSection<ELFT>::GotPltSection()
+                              Target->GotPltEntrySize, ".got.plt") {}
+ 
+ template <class ELFT> void GotPltSection<ELFT>::addEntry(SymbolBody &Sym) {
+-  Sym.GotPltIndex = Target->GotPltHeaderEntriesNum + Entries.size();
+   Entries.push_back(&Sym);
+ }
+ 
+@@ -707,6 +708,16 @@ template <class ELFT> size_t GotPltSection<ELFT>::getSize() const {
+          Target->GotPltEntrySize;
+ }
+ 
++template <class ELFT> void GotPltSection<ELFT>::finalize() {
++  if (Config->RandomizeGotPlt)
++    std::random_shuffle(Entries.begin(), Entries.end());
++
++  uint32_t idx = Target->GotPltHeaderEntriesNum;
++  for (SymbolBody *B : Entries) {
++    B->GotPltIndexFuture.determine(idx++);
++  }
++}
++
+ template <class ELFT> void GotPltSection<ELFT>::writeTo(uint8_t *Buf) {
+   Target->writeGotPltHeader(Buf);
+   Buf += Target->GotPltHeaderEntriesNum * Target->GotPltEntrySize;
+@@ -727,7 +738,6 @@ IgotPltSection<ELFT>::IgotPltSection()
+ 
+ template <class ELFT> void IgotPltSection<ELFT>::addEntry(SymbolBody &Sym) {
+   Sym.IsInIgot = true;
+-  Sym.GotPltIndex = Entries.size();
+   Entries.push_back(&Sym);
+ }
+ 
+@@ -735,6 +745,16 @@ template <class ELFT> size_t IgotPltSection<ELFT>::getSize() const {
+   return Entries.size() * Target->GotPltEntrySize;
+ }
+ 
++template <class ELFT> void IgotPltSection<ELFT>::finalize() {
++  if (Config->RandomizeGotPlt)
++    std::random_shuffle(Entries.begin(), Entries.end());
++
++  uint32_t idx = Target->GotPltHeaderEntriesNum;
++  for (SymbolBody *B : Entries) {
++    B->GotPltIndexFuture.determine(idx++);
++  }
++}
++
+ template <class ELFT> void IgotPltSection<ELFT>::writeTo(uint8_t *Buf) {
+   for (const SymbolBody *B : Entries) {
+     Target->writeIgotPlt(Buf, *B);
+@@ -817,6 +837,7 @@ template <class ELFT> void DynamicSection<ELFT>::addEntries() {
+   if (Config->ZNodelete)
+     DtFlags1 |= DF_1_NODELETE;
+   if (Config->ZNow) {
++    add({DT_BIND_NOW, (uint64_t)0});
+     DtFlags |= DF_BIND_NOW;
+     DtFlags1 |= DF_1_NOW;
+   }
+@@ -954,8 +975,8 @@ template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
+ template <class ELFT>
+ typename ELFT::uint DynamicReloc<ELFT>::getOffset() const {
+   if (OutputSec)
+-    return OutputSec->Addr + OffsetInSec;
+-  return InputSec->OutSec->Addr + InputSec->getOffset(OffsetInSec);
++    return OutputSec->Addr + OffsetInSecFuture->get();
++  return InputSec->OutSec->Addr + InputSec->getOffset(OffsetInSecFuture->get());
+ }
+ 
+ template <class ELFT>
+@@ -1419,6 +1440,17 @@ PltSection<ELFT>::PltSection()
+     : SyntheticSection<ELFT>(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
+                              ".plt") {}
+ 
++template <class ELFT> void PltSection<ELFT>::finalize() {
++  if (Config->RandomizePlt)
++    std::random_shuffle(Entries.begin(), Entries.end());
++
++  uint32_t idx = 0;
++  for (auto &Tuple : Entries) {
++    // The first element of the tuple is the SymbolBody
++    std::get<0>(Tuple)->PltIndexFuture.determine(idx++);
++  }
++}
++
+ template <class ELFT> void PltSection<ELFT>::writeTo(uint8_t *Buf) {
+   // At beginning of PLT, we have code to call the dynamic linker
+   // to resolve dynsyms at runtime. Write such code.
+@@ -1426,19 +1458,21 @@ template <class ELFT> void PltSection<ELFT>::writeTo(uint8_t *Buf) {
+   size_t Off = Target->PltHeaderSize;
+ 
+   for (auto &I : Entries) {
+-    const SymbolBody *B = I.first;
+-    unsigned RelOff = I.second;
++    SymbolBody *B;
++    unsigned RelIndex, RelOff;
++    std::tie(B, RelIndex, RelOff) = std::move(I);
++
+     uint64_t Got = B->getGotPltVA<ELFT>();
+     uint64_t Plt = this->getVA() + Off;
+-    Target->writePlt(Buf + Off, Got, Plt, B->PltIndex, RelOff);
++    Target->writePlt(Buf + Off, Got, Plt, B->PltIndexFuture.get(), RelIndex, RelOff);
+     Off += Target->PltEntrySize;
+   }
+ }
+ 
+ template <class ELFT> void PltSection<ELFT>::addEntry(SymbolBody &Sym) {
+-  Sym.PltIndex = Entries.size();
++  Sym.PltIndexFuture.mark();
+   unsigned RelOff = In<ELFT>::RelaPlt->getRelocOffset();
+-  Entries.push_back(std::make_pair(&Sym, RelOff));
++  Entries.push_back(std::make_tuple(&Sym, Entries.size(), RelOff));
+ }
+ 
+ template <class ELFT> size_t PltSection<ELFT>::getSize() const {
+@@ -1450,25 +1484,39 @@ IpltSection<ELFT>::IpltSection()
+     : SyntheticSection<ELFT>(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
+                              ".plt") {}
+ 
++template <class ELFT> void IpltSection<ELFT>::finalize() {
++  if (Config->RandomizePlt)
++    std::random_shuffle(Entries.begin(), Entries.end());
++
++  uint32_t idx = 0;
++  for (auto &Tuple : Entries) {
++    // The first element of the tuple is the SymbolBody
++    std::get<0>(Tuple)->PltIndexFuture.determine(idx++);
++  }
++}
++
+ template <class ELFT> void IpltSection<ELFT>::writeTo(uint8_t *Buf) {
+   // The IRelative relocations do not support lazy binding so no header is
+   // needed
+   size_t Off = 0;
+   for (auto &I : Entries) {
+-    const SymbolBody *B = I.first;
+-    unsigned RelOff = I.second + In<ELFT>::Plt->getSize();
++    SymbolBody *B;
++    unsigned RelIndex, RelOff;
++    std::tie(B, RelIndex, RelOff) = std::move(I);
++
++    RelOff += In<ELFT>::Plt->getSize();
+     uint64_t Got = B->getGotPltVA<ELFT>();
+     uint64_t Plt = this->getVA() + Off;
+-    Target->writePlt(Buf + Off, Got, Plt, B->PltIndex, RelOff);
++    Target->writePlt(Buf + Off, Got, Plt, B->PltIndexFuture.get(), RelIndex, RelOff);
+     Off += Target->PltEntrySize;
+   }
+ }
+ 
+ template <class ELFT> void IpltSection<ELFT>::addEntry(SymbolBody &Sym) {
+-  Sym.PltIndex = Entries.size();
++  Sym.PltIndexFuture.mark();
+   Sym.IsInIplt = true;
+   unsigned RelOff = In<ELFT>::RelaIplt->getRelocOffset();
+-  Entries.push_back(std::make_pair(&Sym, RelOff));
++  Entries.push_back(std::make_tuple(&Sym, Entries.size(), RelOff));
+ }
+ 
+ template <class ELFT> size_t IpltSection<ELFT>::getSize() const {
+diff --git a/lld-4.0.0.src/ELF/SyntheticSections.h b/lld-4.0.0.src/ELF/SyntheticSections.h
+index df67e079..d798b407 100644
+--- a/lld-4.0.0.src/ELF/SyntheticSections.h
++++ b/lld-4.0.0.src/ELF/SyntheticSections.h
+@@ -15,6 +15,8 @@
+ #include "llvm/ADT/MapVector.h"
+ #include "llvm/MC/StringTableBuilder.h"
+ 
++#include "Future.h"
++
+ namespace lld {
+ namespace elf {
+ 
+@@ -201,10 +203,11 @@ public:
+   void addEntry(SymbolBody &Sym);
+   size_t getSize() const override;
+   void writeTo(uint8_t *Buf) override;
++  void finalize() override;
+   bool empty() const override { return Entries.empty(); }
+ 
+ private:
+-  std::vector<const SymbolBody *> Entries;
++  std::vector<SymbolBody *> Entries;
+ };
+ 
+ // The IgotPltSection is a Got associated with the IpltSection for GNU Ifunc
+@@ -220,10 +223,11 @@ public:
+   void addEntry(SymbolBody &Sym);
+   size_t getSize() const override;
+   void writeTo(uint8_t *Buf) override;
++  void finalize() override;
+   bool empty() const override { return Entries.empty(); }
+ 
+ private:
+-  std::vector<const SymbolBody *> Entries;
++  std::vector<SymbolBody *> Entries;
+ };
+ 
+ template <class ELFT>
+@@ -253,15 +257,31 @@ public:
+   DynamicReloc(uint32_t Type, const InputSectionBase<ELFT> *InputSec,
+                uintX_t OffsetInSec, bool UseSymVA, SymbolBody *Sym,
+                uintX_t Addend)
+-      : Type(Type), Sym(Sym), InputSec(InputSec), OffsetInSec(OffsetInSec),
++      : Type(Type), Sym(Sym), InputSec(InputSec),
++        OffsetInSecFuture(new SimpleFuture<uintX_t>(OffsetInSec)),
+         UseSymVA(UseSymVA), Addend(Addend) {}
+ 
++  DynamicReloc(uint32_t Type, const InputSectionBase<ELFT> *InputSec,
++               std::unique_ptr<Future<uintX_t>> OffsetInSecFuture,
++               bool UseSymVA, SymbolBody *Sym, uintX_t Addend)
++    : Type(Type), Sym(Sym), InputSec(InputSec),
++      OffsetInSecFuture(std::move(OffsetInSecFuture)),
++      UseSymVA(UseSymVA), Addend(Addend) {}
++
+   DynamicReloc(uint32_t Type, const OutputSectionBase *OutputSec,
+                uintX_t OffsetInSec, bool UseSymVA, SymbolBody *Sym,
+                uintX_t Addend)
+-      : Type(Type), Sym(Sym), OutputSec(OutputSec), OffsetInSec(OffsetInSec),
++      : Type(Type), Sym(Sym), OutputSec(OutputSec),
++        OffsetInSecFuture(new SimpleFuture<uintX_t>(OffsetInSec)),
+         UseSymVA(UseSymVA), Addend(Addend) {}
+ 
++  DynamicReloc(uint32_t Type, const OutputSectionBase *OutputSec,
++               std::unique_ptr<Future<uintX_t>> OffsetInSecFuture,
++               bool UseSymVA, SymbolBody *Sym, uintX_t Addend)
++    : Type(Type), Sym(Sym), OutputSec(OutputSec),
++      OffsetInSecFuture(std::move(OffsetInSecFuture)),
++      UseSymVA(UseSymVA), Addend(Addend) {}
++
+   uintX_t getOffset() const;
+   uintX_t getAddend() const;
+   uint32_t getSymIndex() const;
+@@ -274,7 +294,7 @@ private:
+   SymbolBody *Sym;
+   const InputSectionBase<ELFT> *InputSec = nullptr;
+   const OutputSectionBase *OutputSec = nullptr;
+-  uintX_t OffsetInSec;
++  std::shared_ptr<Future<uintX_t>> OffsetInSecFuture;
+   bool UseSymVA;
+   uintX_t Addend;
+ };
+@@ -448,10 +468,11 @@ public:
+   void writeTo(uint8_t *Buf) override;
+   size_t getSize() const override;
+   void addEntry(SymbolBody &Sym);
++  void finalize() override;
+   bool empty() const override { return Entries.empty(); }
+ 
+ private:
+-  std::vector<std::pair<const SymbolBody *, unsigned>> Entries;
++  std::vector<std::tuple<SymbolBody *, unsigned, unsigned>> Entries;
+ };
+ 
+ // The IpltSection is a variant of Plt for recording entries for GNU Ifunc
+@@ -463,10 +484,11 @@ public:
+   void writeTo(uint8_t *Buf) override;
+   size_t getSize() const override;
+   void addEntry(SymbolBody &Sym);
++  void finalize() override;
+   bool empty() const override { return Entries.empty(); }
+ 
+ private:
+-  std::vector<std::pair<const SymbolBody *, unsigned>> Entries;
++  std::vector<std::tuple<SymbolBody *, unsigned, unsigned>> Entries;
+ };
+ 
+ template <class ELFT>
+diff --git a/lld-4.0.0.src/ELF/Target.cpp b/lld-4.0.0.src/ELF/Target.cpp
+index 55fcf173..8aec8fdc 100644
+--- a/lld-4.0.0.src/ELF/Target.cpp
++++ b/lld-4.0.0.src/ELF/Target.cpp
+@@ -126,8 +126,9 @@ public:
+   void writeGotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writeIgotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writePltHeader(uint8_t *Buf) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+ 
+   RelExpr adjustRelaxExpr(uint32_t Type, const uint8_t *Data,
+@@ -149,8 +150,9 @@ public:
+   void writeGotPltHeader(uint8_t *Buf) const override;
+   void writeGotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writePltHeader(uint8_t *Buf) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+ 
+   RelExpr adjustRelaxExpr(uint32_t Type, const uint8_t *Data,
+@@ -177,8 +179,9 @@ class PPC64TargetInfo final : public TargetInfo {
+ public:
+   PPC64TargetInfo();
+   RelExpr getRelExpr(uint32_t Type, const SymbolBody &S) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+ };
+ 
+@@ -190,8 +193,9 @@ public:
+   bool isTlsInitialExecRel(uint32_t Type) const override;
+   void writeGotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writePltHeader(uint8_t *Buf) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   bool usesOnlyLowPageBits(uint32_t Type) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+   RelExpr adjustRelaxExpr(uint32_t Type, const uint8_t *Data,
+@@ -221,8 +225,9 @@ public:
+   void writeGotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writeIgotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writePltHeader(uint8_t *Buf) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   RelExpr getThunkExpr(RelExpr Expr, uint32_t RelocType, const InputFile &File,
+                        const SymbolBody &S) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+@@ -239,8 +244,9 @@ public:
+   bool isTlsGlobalDynamicRel(uint32_t Type) const override;
+   void writeGotPlt(uint8_t *Buf, const SymbolBody &S) const override;
+   void writePltHeader(uint8_t *Buf) const override;
+-  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr, uint64_t PltEntryAddr,
+-                int32_t Index, unsigned RelOff) const override;
++  void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
++                uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                int32_t RelIndex, unsigned RelOff) const override;
+   RelExpr getThunkExpr(RelExpr Expr, uint32_t RelocType, const InputFile &File,
+                        const SymbolBody &S) const override;
+   void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const override;
+@@ -464,8 +470,8 @@ void X86TargetInfo::writePltHeader(uint8_t *Buf) const {
+ }
+ 
+ void X86TargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                             uint64_t PltEntryAddr, int32_t Index,
+-                             unsigned RelOff) const {
++                             uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                             int32_t RelIndex, unsigned RelOff) const {
+   const uint8_t Inst[] = {
+       0xff, 0x00, 0x00, 0x00, 0x00, 0x00, // jmp *foo_in_GOT|*foo@GOT(%ebx)
+       0x68, 0x00, 0x00, 0x00, 0x00,       // pushl $reloc_offset
+@@ -478,7 +484,7 @@ void X86TargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+   uint32_t Got = In<ELF32LE>::GotPlt->getVA();
+   write32le(Buf + 2, Config->Shared ? GotEntryAddr - Got : GotEntryAddr);
+   write32le(Buf + 7, RelOff);
+-  write32le(Buf + 12, -Index * PltEntrySize - PltHeaderSize - 16);
++  write32le(Buf + 12, -PltEntryIndex * PltEntrySize - PltHeaderSize - 16);
+ }
+ 
+ uint64_t X86TargetInfo::getImplicitAddend(const uint8_t *Buf,
+@@ -700,8 +706,9 @@ void X86_64TargetInfo<ELFT>::writePltHeader(uint8_t *Buf) const {
+ 
+ template <class ELFT>
+ void X86_64TargetInfo<ELFT>::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                                      uint64_t PltEntryAddr, int32_t Index,
+-                                      unsigned RelOff) const {
++                                      uint64_t PltEntryAddr,
++                                      int32_t PltEntryIndex,
++                                      int32_t RelIndex, unsigned RelOff) const {
+   const uint8_t Inst[] = {
+       0xff, 0x25, 0x00, 0x00, 0x00, 0x00, // jmpq *got(%rip)
+       0x68, 0x00, 0x00, 0x00, 0x00,       // pushq <relocation index>
+@@ -710,8 +717,8 @@ void X86_64TargetInfo<ELFT>::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+   memcpy(Buf, Inst, sizeof(Inst));
+ 
+   write32le(Buf + 2, GotEntryAddr - PltEntryAddr - 6);
+-  write32le(Buf + 7, Index);
+-  write32le(Buf + 12, -Index * PltEntrySize - PltHeaderSize - 16);
++  write32le(Buf + 7, RelIndex);
++  write32le(Buf + 12, -PltEntryIndex * PltEntrySize - PltHeaderSize - 16);
+ }
+ 
+ template <class ELFT>
+@@ -1127,8 +1134,8 @@ RelExpr PPC64TargetInfo::getRelExpr(uint32_t Type, const SymbolBody &S) const {
+ }
+ 
+ void PPC64TargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                               uint64_t PltEntryAddr, int32_t Index,
+-                               unsigned RelOff) const {
++                               uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                               int32_t RelIndex, unsigned RelOff) const {
+   uint64_t Off = GotEntryAddr - getPPC64TocBase();
+ 
+   // FIXME: What we should do, in theory, is get the offset of the function
+@@ -1362,8 +1369,8 @@ void AArch64TargetInfo::writePltHeader(uint8_t *Buf) const {
+ }
+ 
+ void AArch64TargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                                 uint64_t PltEntryAddr, int32_t Index,
+-                                 unsigned RelOff) const {
++                                 uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                                 int32_t RelIndex, unsigned RelOff) const {
+   const uint8_t Inst[] = {
+       0x10, 0x00, 0x00, 0x90, // adrp x16, Page(&(.plt.got[n]))
+       0x11, 0x02, 0x40, 0xf9, // ldr  x17, [x16, Offset(&(.plt.got[n]))]
+@@ -1727,8 +1734,8 @@ void ARMTargetInfo::writePltHeader(uint8_t *Buf) const {
+ }
+ 
+ void ARMTargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                             uint64_t PltEntryAddr, int32_t Index,
+-                             unsigned RelOff) const {
++                             uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                             int32_t RelIndex, unsigned RelOff) const {
+   // FIXME: Using simple code sequence with simple relocations.
+   // There is a more optimal sequence but it requires support for the group
+   // relocations. See ELF for the ARM Architecture Appendix A.3
+@@ -2173,8 +2180,8 @@ void MipsTargetInfo<ELFT>::writePltHeader(uint8_t *Buf) const {
+ 
+ template <class ELFT>
+ void MipsTargetInfo<ELFT>::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                                    uint64_t PltEntryAddr, int32_t Index,
+-                                    unsigned RelOff) const {
++                                    uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                                    int32_t RelIndex, unsigned RelOff) const {
+   const endianness E = ELFT::TargetEndianness;
+   write32<E>(Buf, 0x3c0f0000);     // lui   $15, %hi(.got.plt entry)
+   write32<E>(Buf + 4, 0x8df90000); // l[wd] $25, %lo(.got.plt entry)($15)
+diff --git a/lld-4.0.0.src/ELF/Target.h b/lld-4.0.0.src/ELF/Target.h
+index 752f9cd5..5d61b432 100644
+--- a/lld-4.0.0.src/ELF/Target.h
++++ b/lld-4.0.0.src/ELF/Target.h
+@@ -39,8 +39,8 @@ public:
+   virtual void writePltHeader(uint8_t *Buf) const {}
+ 
+   virtual void writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
+-                        uint64_t PltEntryAddr, int32_t Index,
+-                        unsigned RelOff) const {}
++                        uint64_t PltEntryAddr, int32_t PltEntryIndex,
++                        int32_t RelIndex, unsigned RelOff) const {}
+ 
+   // Returns true if a relocation only uses the low bits of a value such that
+   // all those bits are in in the same page. For example, if the relocation
+diff --git a/llvm-4.0.0.src/.gitignore b/llvm-4.0.0.src/.gitignore
+index 6a183cd6..90d08771 100644
+--- a/llvm-4.0.0.src/.gitignore
++++ b/llvm-4.0.0.src/.gitignore
+@@ -48,12 +48,8 @@ projects/*
+ !projects/Makefile
+ runtimes/*
+ !runtimes/*.*
+-# Clang, which is tracked independently.
+-tools/clang
+ # LLDB, which is tracked independently.
+ tools/lldb
+-# lld, which is tracked independently.
+-tools/lld
+ # llgo, which is tracked independently.
+ tools/llgo
+ # Polly, which is tracked independently.
+diff --git a/llvm-4.0.0.src/include/llvm/CodeGen/AsmPrinter.h b/llvm-4.0.0.src/include/llvm/CodeGen/AsmPrinter.h
+index 4daca034..aef2dd60 100644
+--- a/llvm-4.0.0.src/include/llvm/CodeGen/AsmPrinter.h
++++ b/llvm-4.0.0.src/include/llvm/CodeGen/AsmPrinter.h
+@@ -24,6 +24,8 @@
+ #include "llvm/Support/DataTypes.h"
+ #include "llvm/Support/ErrorHandling.h"
+ 
++#include <random>
++
+ namespace llvm {
+ class AsmPrinterHandler;
+ class BlockAddress;
+@@ -143,6 +145,10 @@ private:
+   /// If the current module uses dwarf CFI annotations strictly for debugging.
+   bool isCFIMoveForDebugging;
+ 
++  std::mt19937 Prng;
++  std::uniform_int_distribution<int> RfsCountUD;
++  std::uniform_int_distribution<int64_t> RfsDataUD;
++
+ protected:
+   explicit AsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer);
+ 
+diff --git a/llvm-4.0.0.src/include/llvm/CodeGen/RegisterClassInfo.h b/llvm-4.0.0.src/include/llvm/CodeGen/RegisterClassInfo.h
+index d784dfbd..b9045223 100644
+--- a/llvm-4.0.0.src/include/llvm/CodeGen/RegisterClassInfo.h
++++ b/llvm-4.0.0.src/include/llvm/CodeGen/RegisterClassInfo.h
+@@ -63,6 +63,8 @@ class RegisterClassInfo {
+ 
+   std::unique_ptr<unsigned[]> PSetLimits;
+ 
++  bool RandomizeOrder;
++
+   // Compute all information about RC.
+   void compute(const TargetRegisterClass *RC) const;
+ 
+@@ -76,6 +78,7 @@ class RegisterClassInfo {
+ 
+ public:
+   RegisterClassInfo();
++  RegisterClassInfo(bool randomize_order);
+ 
+   /// runOnFunction - Prepare to answer questions about MF. This must be called
+   /// before any other methods are used.
+diff --git a/llvm-4.0.0.src/lib/CodeGen/AsmPrinter/AsmPrinter.cpp b/llvm-4.0.0.src/lib/CodeGen/AsmPrinter/AsmPrinter.cpp
+index 24fdbfc9..0d2f15f2 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/AsmPrinter/AsmPrinter.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/AsmPrinter/AsmPrinter.cpp
+@@ -53,6 +53,9 @@
+ #include "llvm/Target/TargetLoweringObjectFile.h"
+ #include "llvm/Target/TargetRegisterInfo.h"
+ #include "llvm/Target/TargetSubtargetInfo.h"
++
++#include <random>
++
+ using namespace llvm;
+ 
+ #define DEBUG_TYPE "asm-printer"
+@@ -71,6 +74,11 @@ STATISTIC(EmittedInsts, "Number of machine instrs printed");
+ 
+ char AsmPrinter::ID = 0;
+ 
++static cl::opt<int>
++RandomizeFunctionSpacing("randomize-fn-spacing", cl::Hidden, cl::init(0),
++                         cl::desc("Fill a random R bytes (0<=R<=N) with random"
++                                  " data after each function"));
++
+ typedef DenseMap<GCStrategy*, std::unique_ptr<GCMetadataPrinter>> gcp_map_type;
+ static gcp_map_type &getGCMap(void *&P) {
+   if (!P)
+@@ -108,7 +116,8 @@ static unsigned getGVAlignmentLog2(const GlobalValue *GV, const DataLayout &DL,
+ AsmPrinter::AsmPrinter(TargetMachine &tm, std::unique_ptr<MCStreamer> Streamer)
+     : MachineFunctionPass(ID), TM(tm), MAI(tm.getMCAsmInfo()),
+       OutContext(Streamer->getContext()), OutStreamer(std::move(Streamer)),
+-      isCFIMoveForDebugging(false), LastMI(nullptr), LastFn(0), Counter(~0U) {
++      isCFIMoveForDebugging(false), RfsCountUD(0, RandomizeFunctionSpacing),
++      LastMI(nullptr), LastFn(0), Counter(~0U) {
+   DD = nullptr;
+   MMI = nullptr;
+   LI = nullptr;
+@@ -118,6 +127,7 @@ AsmPrinter::AsmPrinter(TargetMachine &tm, std::unique_ptr<MCStreamer> Streamer)
+   CurrentFnEnd = nullptr;
+   GCMetadataPrinters = nullptr;
+   VerboseAsm = OutStreamer->isVerboseAsm();
++  Prng.seed(std::chrono::system_clock::now().time_since_epoch().count());
+ }
+ 
+ AsmPrinter::~AsmPrinter() {
+@@ -981,6 +991,17 @@ void AsmPrinter::EmitFunctionBody() {
+   // Emit target-specific gunk after the function body.
+   EmitFunctionBodyEnd();
+ 
++  // RandomizeFunctionSpacing - Emit a random amount of random bytes after the
++  // function
++  if (RandomizeFunctionSpacing > 0) {
++    int N = RfsCountUD(Prng);
++
++    for (; N > 0; N -= std::min(4,N)) {
++      int64_t V = RfsDataUD(Prng);
++      OutStreamer->emitFill(1, std::min(4,N), V);
++    }
++  }
++
+   if (!MF->getLandingPads().empty() || MMI->hasDebugInfo() ||
+       MF->hasEHFunclets() || MAI->hasDotTypeDotSizeDirective()) {
+     // Create a symbol for the end of function.
+diff --git a/llvm-4.0.0.src/lib/CodeGen/MachineScheduler.cpp b/llvm-4.0.0.src/lib/CodeGen/MachineScheduler.cpp
+index e06bc517..37518644 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/MachineScheduler.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/MachineScheduler.cpp
+@@ -3595,3 +3595,70 @@ void ScheduleDAGMI::viewGraph(const Twine &Name, const Twine &Title) {
+ void ScheduleDAGMI::viewGraph() {
+   viewGraph(getDAGName(), "Scheduling-Units Graph for " + getDAGName());
+ }
++
++//===----------------------------------------------------------------------===//
++// Randomized Machine Instruction Scheduler
++//===----------------------------------------------------------------------===//
++
++#include <tuple>
++#include <random>
++
++namespace {
++typedef std::tuple<SUnit*, bool, unsigned int> x;
++
++/// Order by the third element of the tuple.
++struct RandomSUnitOrder {
++  bool operator()(x &A, x &B) const {
++    return std::get<2>(A) < std::get<2>(B);
++  }
++};
++
++/// Reorder instructions randomly.
++class RandomizedScheduler : public MachineSchedStrategy {
++  PriorityQueue<x, std::vector<x>, RandomSUnitOrder> Q;
++
++  std::mt19937 PRG;
++  std::uniform_int_distribution<unsigned int> U;
++public:
++  RandomizedScheduler() {
++    std::random_device rd;
++    PRG.seed(rd());
++  }
++
++  void initialize(ScheduleDAGMI*) override {
++    Q.clear();
++  }
++
++  /// Implement MachineSchedStrategy interface.
++  /// -----------------------------------------
++
++  SUnit *pickNode(bool &IsTopNode) override {
++    SUnit *SU;
++    unsigned int w;
++
++    do {
++      if (Q.empty()) return nullptr;
++      std::tie(SU, IsTopNode, w) = Q.top();
++      Q.pop();
++    } while (SU->isScheduled);
++
++    return SU;
++  }
++
++  void schedNode(SUnit *SU, bool IsTopNode) override {}
++
++  void releaseTopNode(SUnit *SU) override {
++    Q.push(std::forward_as_tuple(SU, true, U(PRG)));
++  }
++  void releaseBottomNode(SUnit *SU) override {
++    Q.push(std::forward_as_tuple(SU, false, U(PRG)));
++  }
++};
++} // namespace
++
++static ScheduleDAGInstrs *createRandomizedScheduler(MachineSchedContext *C) {
++  return new ScheduleDAGMILive(C, make_unique<RandomizedScheduler>());
++}
++static MachineSchedRegistry RandomizedSchedulerRegistry(
++  "random", "Randomly order machine instructions",
++  createRandomizedScheduler);
+diff --git a/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.cpp b/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.cpp
+index fb49a934..4b5aede1 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.cpp
+@@ -41,10 +41,18 @@ static cl::opt<bool, true>
+ VerifyRegAlloc("verify-regalloc", cl::location(RegAllocBase::VerifyEnabled),
+                cl::desc("Verify during register allocation"));
+ 
++static cl::opt<bool, true>
++RandomizeRegs("randomize-regs", cl::location(RegAllocBase::RandomizeRegs),
++              cl::desc("Randomly allocate a register when more than one choice "
++                       "is available."),
++              cl::init(false), cl::NotHidden);
++
+ const char RegAllocBase::TimerGroupName[] = "regalloc";
+ const char RegAllocBase::TimerGroupDescription[] = "Register Allocation";
+ bool RegAllocBase::VerifyEnabled = false;
+ 
++bool RegAllocBase::RandomizeRegs = false;
++
+ //===----------------------------------------------------------------------===//
+ //                         RegAllocBase Implementation
+ //===----------------------------------------------------------------------===//
+diff --git a/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.h b/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.h
+index d8921b5c..9fa5198e 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.h
++++ b/llvm-4.0.0.src/lib/CodeGen/RegAllocBase.h
+@@ -72,7 +72,8 @@ protected:
+   SmallPtrSet<MachineInstr *, 32> DeadRemats;
+ 
+   RegAllocBase()
+-    : TRI(nullptr), MRI(nullptr), VRM(nullptr), LIS(nullptr), Matrix(nullptr) {}
++    : TRI(nullptr), MRI(nullptr), VRM(nullptr), LIS(nullptr), Matrix(nullptr),
++      RegClassInfo(RandomizeRegs) {}
+ 
+   virtual ~RegAllocBase() {}
+ 
+@@ -114,6 +115,8 @@ public:
+   /// VerifyEnabled - True when -verify-regalloc is given.
+   static bool VerifyEnabled;
+ 
++  // RandomizeRegs - True when -randomize-regs is given.
++  static bool RandomizeRegs;
+ private:
+   void seedLiveRegs();
+ };
+diff --git a/llvm-4.0.0.src/lib/CodeGen/RegAllocFast.cpp b/llvm-4.0.0.src/lib/CodeGen/RegAllocFast.cpp
+index fd759bc3..81109e2d 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/RegAllocFast.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/RegAllocFast.cpp
+@@ -12,6 +12,7 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#include "RegAllocBase.h"
+ #include "llvm/ADT/DenseMap.h"
+ #include "llvm/ADT/IndexedMap.h"
+ #include "llvm/ADT/STLExtras.h"
+@@ -48,8 +49,9 @@ namespace {
+   class RAFast : public MachineFunctionPass {
+   public:
+     static char ID;
+-    RAFast() : MachineFunctionPass(ID), StackSlotForVirtReg(-1),
+-               isBulkSpilling(false) {}
++    RAFast() : MachineFunctionPass(ID),
++               RegClassInfo(RegAllocBase::RandomizeRegs),
++               StackSlotForVirtReg(-1), isBulkSpilling(false) {}
+ 
+   private:
+     MachineFunction *MF;
+diff --git a/llvm-4.0.0.src/lib/CodeGen/RegAllocGreedy.cpp b/llvm-4.0.0.src/lib/CodeGen/RegAllocGreedy.cpp
+index c47cfb1b..ce94a41a 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/RegAllocGreedy.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/RegAllocGreedy.cpp
+@@ -463,7 +463,7 @@ FunctionPass* llvm::createGreedyRegisterAllocator() {
+   return new RAGreedy();
+ }
+ 
+-RAGreedy::RAGreedy(): MachineFunctionPass(ID) {
++RAGreedy::RAGreedy(): MachineFunctionPass(ID), RCI(RandomizeRegs) {
+ }
+ 
+ void RAGreedy::getAnalysisUsage(AnalysisUsage &AU) const {
+diff --git a/llvm-4.0.0.src/lib/CodeGen/RegisterClassInfo.cpp b/llvm-4.0.0.src/lib/CodeGen/RegisterClassInfo.cpp
+index 178fa18a..33bc4759 100644
+--- a/llvm-4.0.0.src/lib/CodeGen/RegisterClassInfo.cpp
++++ b/llvm-4.0.0.src/lib/CodeGen/RegisterClassInfo.cpp
+@@ -21,6 +21,9 @@
+ #include "llvm/Support/Debug.h"
+ #include "llvm/Support/raw_ostream.h"
+ 
++#include <random>
++#include <algorithm>
++
+ using namespace llvm;
+ 
+ #define DEBUG_TYPE "regalloc"
+@@ -30,7 +33,12 @@ StressRA("stress-regalloc", cl::Hidden, cl::init(0), cl::value_desc("N"),
+          cl::desc("Limit all regclasses to N registers"));
+ 
+ RegisterClassInfo::RegisterClassInfo()
+-  : Tag(0), MF(nullptr), TRI(nullptr), CalleeSaved(nullptr) {}
++  : Tag(0), MF(nullptr), TRI(nullptr), CalleeSaved(nullptr),
++    RandomizeOrder(false) {}
++
++RegisterClassInfo::RegisterClassInfo(bool randomize_order)
++  : Tag(0), MF(nullptr), TRI(nullptr), CalleeSaved(nullptr),
++    RandomizeOrder(randomize_order) {}
+ 
+ void RegisterClassInfo::runOnMachineFunction(const MachineFunction &mf) {
+   bool Update = false;
+@@ -116,6 +124,9 @@ void RegisterClassInfo::compute(const TargetRegisterClass *RC) const {
+   RCI.NumRegs = N + CSRAlias.size();
+   assert (RCI.NumRegs <= NumRegs && "Allocation order larger than regclass");
+ 
++  if (RandomizeOrder && N > 1)
++    std::random_shuffle(&RCI.Order[0], &RCI.Order[N-1]);
++
+   // CSR aliases go after the volatile registers, preserve the target's order.
+   for (unsigned i = 0, e = CSRAlias.size(); i != e; ++i) {
+     unsigned PhysReg = CSRAlias[i];
+@@ -126,6 +137,9 @@ void RegisterClassInfo::compute(const TargetRegisterClass *RC) const {
+     LastCost = Cost;
+   }
+ 
++  if (RandomizeOrder && CSRAlias.size() > 1)
++    std::random_shuffle(&RCI.Order[RCI.NumRegs - CSRAlias.size()], &RCI.Order[RCI.NumRegs - 1]);
++
+   // Register allocator stress test.  Clip register class to N registers.
+   if (StressRA && RCI.NumRegs > StressRA)
+     RCI.NumRegs = StressRA;
+diff --git a/llvm-4.0.0.src/lib/Target/X86/X86FastISel.cpp b/llvm-4.0.0.src/lib/Target/X86/X86FastISel.cpp
+index c890fdd1..f190f9c2 100644
+--- a/llvm-4.0.0.src/lib/Target/X86/X86FastISel.cpp
++++ b/llvm-4.0.0.src/lib/Target/X86/X86FastISel.cpp
+@@ -41,8 +41,33 @@
+ #include "llvm/MC/MCSymbol.h"
+ #include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Target/TargetOptions.h"
++
++#include <random>
++
+ using namespace llvm;
+ 
++enum BranchRandomization {
++  none, conservative, reasonable, aggressive
++};
++
++static cl::opt<BranchRandomization>
++RandomizeBranches("randomize-branches", cl::values(
++                    clEnumVal(none, "Disable randomization"),
++                    clEnumVal(conservative, "Randomize only if no fallthrough "
++                              "opportunity is wasted and no register is spilt"),
++                    clEnumVal(reasonable, "Randomize only if no fallthrough "
++                              "opportunity is wasted"),
++                    clEnumVal(aggressive, "Randomize whenever possible")),
++                   cl::desc("Randomly choose from a set of equivalent compare "
++                            "and branch instructions to express the desired "
++                            "control flow."),
++                   cl::init(none), cl::NotHidden);
++
++static cl::opt<unsigned long long>
++RandomizeBranchesSeed("randomize-branches-seed", cl::Hidden,
++                      cl::desc("Seed for the PRNG used in branch randomization"),
++                      cl::init(0));
++
+ namespace {
+ 
+ class X86FastISel final : public FastISel {
+@@ -57,6 +82,9 @@ class X86FastISel final : public FastISel {
+   bool X86ScalarSSEf64;
+   bool X86ScalarSSEf32;
+ 
++  std::mt19937 Prng;
++  std::bernoulli_distribution CoinFlip;
++
+ public:
+   explicit X86FastISel(FunctionLoweringInfo &funcInfo,
+                        const TargetLibraryInfo *libInfo)
+@@ -64,6 +92,12 @@ public:
+     Subtarget = &funcInfo.MF->getSubtarget<X86Subtarget>();
+     X86ScalarSSEf64 = Subtarget->hasSSE2();
+     X86ScalarSSEf32 = Subtarget->hasSSE1();
++    if (RandomizeBranchesSeed.getNumOccurrences()) {
++      Prng.seed(RandomizeBranchesSeed.getValue());
++    } else {
++      std::random_device rng;
++      Prng.seed(rng());
++    }
+   }
+ 
+   bool fastSelectInstruction(const Instruction *I) override;
+@@ -1633,8 +1667,16 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
+           CmpRHS = CmpLHS;
+       }
+ 
++      bool TrueSucc = FuncInfo.MBB->isLayoutSuccessor(TrueMBB);
++      bool FalseSucc = FuncInfo.MBB->isLayoutSuccessor(FalseMBB);
++      bool Random = CoinFlip(Prng);
++
+       // Try to take advantage of fallthrough opportunities.
+-      if (FuncInfo.MBB->isLayoutSuccessor(TrueMBB)) {
++      // If randomization is enabled, a swap may happen even if there is no
++      // fallthrough opportunity.
++      if ((TrueSucc && (RandomizeBranches < aggressive || Random))
++          || (!TrueSucc && Random && ((RandomizeBranches > none && !FalseSucc)
++                                      || RandomizeBranches == aggressive))) {
+         std::swap(TrueMBB, FalseMBB);
+         Predicate = CmpInst::getInversePredicate(Predicate);
+       }
+@@ -1662,6 +1704,36 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
+       assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
+ 
+       BranchOpc = X86::GetCondBranchFromCond(CC);
++
++      // Includes constant expressions as well, which may end up not being
++      // folded later, but we must err on the side of safety
++      bool HasImmediateOperand = isa<llvm::Constant>(CmpLHS)
++        || isa<llvm::Constant>(CmpRHS);
++      Random = CoinFlip(Prng);
++
++      if (((RandomizeBranches == conservative && !HasImmediateOperand)
++          || RandomizeBranches >= reasonable) && Random) {
++        SwapArgs = !SwapArgs;
++
++        switch (BranchOpc) {
++        default:
++          // We do not have a dual for this conditional branch instruction, back
++          // out
++          SwapArgs = !SwapArgs;
++          break;
++        case X86::JE_1:                          break;
++        case X86::JNE_1:                         break;
++        case X86::JL_1:  BranchOpc = X86::JG_1;  break;
++        case X86::JLE_1: BranchOpc = X86::JGE_1; break;
++        case X86::JG_1:  BranchOpc = X86::JL_1;  break;
++        case X86::JGE_1: BranchOpc = X86::JLE_1; break;
++        case X86::JB_1:  BranchOpc = X86::JA_1;  break;
++        case X86::JBE_1: BranchOpc = X86::JAE_1; break;
++        case X86::JA_1:  BranchOpc = X86::JB_1;  break;
++        case X86::JAE_1: BranchOpc = X86::JBE_1; break;
++        }
++      }
++
+       if (SwapArgs)
+         std::swap(CmpLHS, CmpRHS);
+ 
+diff --git a/llvm-4.0.0.src/lib/Transforms/Blinker b/llvm-4.0.0.src/lib/Transforms/Blinker
+new file mode 120000
+index 00000000..3b849e40
+--- /dev/null
++++ b/llvm-4.0.0.src/lib/Transforms/Blinker
+@@ -0,0 +1 @@
++../../../blinker-randomizer
+\ No newline at end of file
+diff --git a/llvm-4.0.0.src/lib/Transforms/CMakeLists.txt b/llvm-4.0.0.src/lib/Transforms/CMakeLists.txt
+index 67bdeb27..d683b8bf 100644
+--- a/llvm-4.0.0.src/lib/Transforms/CMakeLists.txt
++++ b/llvm-4.0.0.src/lib/Transforms/CMakeLists.txt
+@@ -7,3 +7,4 @@ add_subdirectory(Vectorize)
+ add_subdirectory(Hello)
+ add_subdirectory(ObjCARC)
+ add_subdirectory(Coroutines)
++add_subdirectory(Blinker)
+diff --git a/llvm-4.0.0.src/tools/clang b/llvm-4.0.0.src/tools/clang
+new file mode 120000
+index 00000000..ee1b8452
+--- /dev/null
++++ b/llvm-4.0.0.src/tools/clang
+@@ -0,0 +1 @@
++../../cfe-4.0.0.src/
+\ No newline at end of file
+diff --git a/llvm-4.0.0.src/tools/lld b/llvm-4.0.0.src/tools/lld
+new file mode 120000
+index 00000000..7a931e24
+--- /dev/null
++++ b/llvm-4.0.0.src/tools/lld
+@@ -0,0 +1 @@
++../../lld-4.0.0.src/
+\ No newline at end of file
+diff --git a/release_build.sh b/release_build.sh
+new file mode 100755
+index 00000000..0f0acc41
+--- /dev/null
++++ b/release_build.sh
+@@ -0,0 +1,22 @@
++#!/bin/bash -xe
++
++SELF=$(readlink -f "$0")
++SELFDIR=$(dirname "$SELF")
++
++mkdir -p install/opt/blinker-llvm build
++
++PATCH_VERSION=$(date -d @`find "$SELFDIR" -print0 | xargs -0 stat -c '%Y' | sort -n | tail -n 1` '+%Y%m%d%H%M%S')
++
++cd build
++cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="../install/opt/blinker-llvm/" -DLLVM_TARGETS_TO_BUILD="X86" -DCMAKE_BUILD_TYPE="Release" -DENABLE_ASSERTIONS="OFF" "$SELFDIR/llvm-4.0.0.src"
++make
++make install
++
++cd ../install
++
++fpm -t deb -s dir -n blinker-llvm \
++    --description "Blinker - LLVM tools (clang, lld) modified for use with blinker" \
++    --version "4.0.0p$PATCH_VERSION" --license 'NCSA' \
++    .
++
++find . -xtype f -name 'blinker-llvm-*.deb' -exec mv {} .. \;
