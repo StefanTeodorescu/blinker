@@ -1,0 +1,20 @@
+c_flags :relro => :full, :pie => true, :O => 1, :stack_protector => true,
+        :reorder_got_plt => true,
+        :reorder_plt => true,
+        :randomize_regs => true,
+        :randomize_branches => true,
+        :randomize_function_spacing => true,
+        :randomize_scheduling => true,
+        :reorder_functions => true,
+        :reorder_globals => true
+cxx_compiled 'role_gaming' => 'role_gaming.cxx'
+
+generated_file 'description.html.erb' do
+  puts <<EOF
+The <a href="<%= handout_url %>">binary</a> is running on the server (port #{BlinkerVars.socat_port}). Exploit it to read the contents of the file called <code>flag</code> in the same directory.
+EOF
+end
+
+task :description => 'description.html.erb'
+task :executable => 'role_gaming'
+scenario 'stdio_socat'

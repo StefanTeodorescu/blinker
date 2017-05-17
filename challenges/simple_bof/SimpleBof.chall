@@ -1,0 +1,16 @@
+c_flags :reorder_got_plt => true,
+        :reorder_plt => true,
+        :randomize_regs => true,
+        :randomize_branches => true,
+        :randomize_function_spacing => true,
+        :randomize_scheduling => true,
+        :reorder_functions => true,
+        :reorder_globals => true
+c_compiled 'bof.x' => 'bof.c'
+
+erb_binding :port => lambda { BlinkerVars.socat_port }
+erb_file 'description.html.erb' => 'description.html.erb.erb'
+
+task :description => 'description.html.erb'
+task :executable => 'bof.x'
+scenario 'stdio_socat'

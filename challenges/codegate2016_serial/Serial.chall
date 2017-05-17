@@ -1,0 +1,14 @@
+task :executable => 'serial'
+task :handout => 'serial'
+task :description => 'description.html.erb'
+
+generated_file 'description.html.erb' do
+  puts <<EOF
+<a href="<%= handout_url %>">This executable</a> is running on the server (port #{BlinkerVars.socat_port}). Exploit it to read the contents of the file called <code>flag</code>.
+EOF
+end
+
+c_flags :stack_protector => true, :strip => true
+c_compiled 'serial' => 'serial.c'
+
+scenario 'stdio_socat'

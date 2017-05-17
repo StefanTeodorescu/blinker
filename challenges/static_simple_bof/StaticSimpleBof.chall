@@ -1,0 +1,63 @@
+flag = 'flag{62196d08cd54098a80834cc2a4263ff5df7de0cf0482980efa19}'
+declare_flag flag
+
+task :description => 'description.html.erb'
+task :handout => 'bof.x'
+
+name = "blinker-challenge-#{BlinkerVars.challenge_id}"
+
+task :deploy => "#{name}.deb"
+
+task "opt/#{name}/bof.x" => 'bof.x' do
+  FileUtils.mkdir_p "opt/#{name}"
+  FileUtils.cp 'bof.x', "opt/#{name}/bof.x"
+end
+
+generated_file "opt/#{name}/flag" do
+  puts flag
+end
+
+generated_file "opt/#{name}/start.sh" do
+  puts '#!/bin/sh'
+  puts "/usr/bin/socat tcp-listen:49422,reuseaddr exec:'stdbuf -i0 -oL -eL /opt/#{name}/bof.x'"
+end
+
+generated_file "lib/systemd/system/#{name}.service" do
+  puts <<EOF
+[Unit]
+Description=Blinker Challenge #{BlinkerVars.challenge_id}
+
+[Service]
+ExecStart=/bin/sh /opt/#{name}/start.sh
+WorkingDirectory=/opt/#{name}/
+KillMode=process
+Restart=always
+RestartSec=1
+StartLimitInterval=1
+StartLimitBurst=2
+User=challenge
+Group=nogroup
+
+[Install]
+WantedBy=multi-user.target
+Alias=#{name}.service
+EOF
+end
+
+deb_dependency 'socat'
+deb_name name
+deb_user 'challenge'
+deb_group 'nogroup'
+deb_preinst <<EOF
+#!/bin/sh
+adduser --system challenge
+EOF
+deb_postinst <<EOF
+#!/bin/sh
+systemctl enable #{name}.service
+systemctl start #{name}.service
+EOF
+
+deb_archive "#{name}.deb" => ["opt/#{name}/bof.x", "opt/#{name}/flag", "opt/#{name}/start.sh", "lib/systemd/system/#{name}.service"]
+
+task :deploy => "#{name}.deb"

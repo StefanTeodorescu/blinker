@@ -1,0 +1,321 @@
+def print_string
+next: dupl
+      ifzero fine
+      printa
+      jmp next
+fine: pop
+      ret
+end
+
+def read_line
+      const 0
+read: reada
+      dupl
+      const 10
+      sub
+      ifzero fine
+      jmp read
+fine: pop
+      ret
+end
+
+def r_itoa
+      const 0
+next: swap
+      const '0'
+      sub
+      dupl
+      const 9
+      gt
+      ifzero dec
+      const ('A'-'0')
+      sub
+      dupl
+      const 5
+      gt
+      ifzero hex
+      const ('a'-'A')
+      sub
+      dupl
+      const 5
+      gt
+      ifzero hex
+      const 'a'
+      add
+      ret
+hex:  const 10
+      add
+dec:  swap
+      const 16
+      mul
+      add
+      jmp next
+end
+
+def _2e32_mod_int32
+  ; 2e32
+  const 8
+  const 8
+  mul
+  dupl
+  dupl
+  mul
+  dupl
+  mul
+  mul
+  const 4
+  mul
+
+  swap
+  mod
+  ret
+end
+
+def parts_mod_int32 ; take M
+  ; part 4 is most significant
+
+  dupl
+
+  dupl
+  call _2e32_mod_int32
+  store unit
+
+
+  ; modulus with 0x1_00000000_00000000_00000000
+  dupl
+  dupl
+  dupl
+  dupl
+  load unit
+  dupl
+  mul
+  swap
+  mod
+  load unit
+  mul
+  swap
+  mod
+  swap
+  ; modulus with part4
+  load $part4
+  swap
+  mod
+  ; modulus with shifted part4
+  mul
+  swap
+  mod
+  swap
+
+
+  ; modulus with 0x1_00000000_00000000
+  dupl
+  dupl
+  dupl
+  load unit
+  dupl
+  mul
+  swap
+  mod
+  swap
+  ; modulus with part3
+  load $part3
+  swap
+  mod
+  ; modulus with shifted part3
+  mul
+  swap
+  mod
+  swap
+
+
+  ; modulus with 0x1_00000000
+  dupl
+  dupl
+  load unit
+  swap
+  ; modulus with part2
+  load $part2
+  swap
+  mod
+  ; modulus with shifted part2
+  mul
+  swap
+  mod
+  swap
+
+
+  ; modulus with part1
+  load $part1
+  swap
+  mod
+
+
+  ; add up all partial moduli
+  add
+  add
+  add
+  swap
+  mod
+
+  ret
+end
+
+def main
+       ; read input
+       string "Password: "
+       call print_string
+       call read_line
+
+       const '}'
+       sub
+       neg
+       ifzero wrong
+
+       call r_itoa
+       const '-'
+       sub
+       neg
+       ifzero wrong
+       store $part1
+       call r_itoa
+       const '-'
+       sub
+       neg
+       ifzero wrong
+       store $part2
+       call r_itoa
+       const '-'
+       sub
+       neg
+       ifzero wrong
+       store $part3
+       call r_itoa
+       const '{'
+       sub
+       neg
+       ifzero wrong
+       store $part4
+
+       ; check prefix
+       const 'g'
+       sub
+       neg
+       ifzero wrong
+       const 'a'
+       sub
+       neg
+       ifzero wrong
+       const 'l'
+       sub
+       neg
+       ifzero wrong
+       const 'f'
+       sub
+       neg
+       ifzero wrong
+
+       ; check that input is smaller than modulus
+       const <%= modparts[3] %>
+       dupl
+       load $part4
+       gt
+       neg
+       ifzero loads
+       load $part4
+       swap
+       gt
+       neg
+       ifzero wrong
+
+       const <%= modparts[2] %>
+       dupl
+       load $part3
+       gt
+       neg
+       ifzero loads
+       load $part3
+       swap
+       gt
+       neg
+       ifzero wrong
+
+       const <%= modparts[1] %>
+       dupl
+       load $part2
+       gt
+       neg
+       ifzero loads
+       load $part2
+       swap
+       gt
+       neg
+       ifzero wrong
+
+       const <%= modparts[0] %>
+       dupl
+       load $part1
+       gt
+       neg
+       ifzero loads
+       jmp wrong
+
+loads:
+       ; load mods
+<% (0..3).each { |i| %>
+       string "<%= primes[i].to_s(16) %>"
+<% } %>
+       call r_itoa
+       pop
+       store mod4
+       call r_itoa
+       pop
+       store mod3
+       call r_itoa
+       pop
+       store mod2
+       call r_itoa
+       pop
+       store mod1
+
+<% 3.downto(0) { |i| %>
+       string "<%= results[i].to_s(16) %>"
+<% } %>
+
+       ; compute and check moduli
+       call r_itoa
+       pop
+       load mod1
+       call parts_mod_int32
+       sub
+       neg
+       ifzero wrong
+       call r_itoa
+       pop
+       load mod2
+       call parts_mod_int32
+       sub
+       neg
+       ifzero wrong
+       call r_itoa
+       pop
+       load mod3
+       call parts_mod_int32
+       sub
+       neg
+       ifzero wrong
+       call r_itoa
+       pop
+       load mod4
+       call parts_mod_int32
+       sub
+       neg
+       ifzero wrong
+       string "Good work!\n"
+       call print_string
+       ret
+wrong: string "Wrong!\n"
+       call print_string
+       ret
+end
+
+;; TODO check if inputI >= partI and if true for all, input > part, so wrong!

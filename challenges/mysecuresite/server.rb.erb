@@ -1,0 +1,104 @@
+ENV['RACK_ENV']='production'
+
+require 'sinatra'
+require 'sinatra/cookies'
+require 'securerandom'
+require 'openssl'
+require 'json'
+require 'haml'
+
+$cipher = OpenSSL::Cipher.new('AES-128-CBC')
+$key = SecureRandom.random_bytes(16)
+
+def encrypt pt
+  $cipher.reset
+  $cipher.encrypt
+  $cipher.key = $key
+  iv = $cipher.random_iv
+  (iv+$cipher.update(pt)+$cipher.final).unpack('H*').first
+end
+
+def decrypt ct
+  iv = ct[0..31]
+  ct = ct[32..-1]
+  $cipher.reset
+  $cipher.decrypt
+  $cipher.key = $key
+  $cipher.iv = [iv].pack('H*')
+  $cipher.update([ct].pack('H*'))+$cipher.final
+end
+
+set :lock, true
+
+before do
+  begin
+    if cookies[:userdata]
+      plain = decrypt(cookies[:userdata])
+      @userdata = JSON.parse(plain) rescue nil
+    end
+  rescue => e
+    cookies.delete(:userdata)
+    @message = 'invalid authentication'
+  end
+
+  unless @userdata
+    @userdata = { 'admin' => 0, 'flag' => "<%= flag %>" }
+    cookies[:userdata] = encrypt(@userdata.to_json)
+  end
+end
+
+get '/' do
+  if @userdata['admin'] == 1
+    @message = <%=
+      [%('Here\\'s some super-duper secret stuff for admin eyes only: The Answer to the Ultimate Question of Life, the Universe, and Everything is 42.'),
+       %('Hello, admin! All you need to know is E=mc^2.'),
+       %('It was <i>them</i>, all along, as we suspected.'),
+       %('Here you go: https://www.youtube.com/watch?v=dQw4w9WgXcQ')].sample
+    %>
+  end
+
+  art=''
+  (0...25).each {
+    last = ' '
+    (0...50).each {
+      prob = Random.rand
+      if prob < 0.65
+        prob /= 0.65
+
+        if prob > 0.95
+          last = '+'
+        elsif prob > 0.9
+          last = '-'
+        elsif prob > 0.85
+          last = '_'
+        elsif prob > 0.80
+          last = '<'
+        elsif prob > 0.75
+          last = '>'
+        elsif prob > 0.7
+          last = '.'
+        else
+          last = ' '
+        end
+      end
+      art += last
+    }
+    art+="\n"
+  }
+
+  @random = art
+
+  haml :index
+end
+
+__END__
+
+@@ index
+%html
+  %body
+    - if @message
+      %p= @message
+    Here's your daily dose of random art:
+    %br
+    %pre= @random
+

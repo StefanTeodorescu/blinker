@@ -1,0 +1,10 @@
+declare_flag 'flag{18f0b6a40d10fa2ac426123ef1cf6661}'
+
+generated_file 'description.html.erb' do
+  puts <<EOF
+Find the password <a href="<%= handout_url %>">this binary</a> will accept.
+EOF
+end
+
+task :description => 'description.html.erb'
+task :handout => 'ren.x'

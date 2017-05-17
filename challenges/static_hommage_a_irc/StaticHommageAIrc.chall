@@ -1,0 +1,62 @@
+flag = 'flag{c21fa21ae1bb44a0d03388e4f7417678e6b043098573f232f852}'
+declare_flag flag
+
+task :description => 'description.html.erb'
+task :handout => 'chat.x'
+
+deb_dependency 'libc6-i386'
+
+name = "blinker-challenge-#{BlinkerVars.challenge_id}"
+
+task :deploy => "#{name}.deb"
+
+task "opt/#{name}/chat.x" => 'chat.x' do
+  FileUtils.mkdir_p "opt/#{name}"
+  FileUtils.cp 'chat.x', "opt/#{name}/chat.x"
+end
+
+generated_file "opt/#{name}/flag" do
+  puts flag
+end
+
+generated_file "opt/#{name}/start.sh" do
+  puts '#!/bin/sh'
+  puts "/opt/#{name}/chat.x"
+end
+
+generated_file "lib/systemd/system/#{name}.service" do
+  puts <<EOF
+[Unit]
+Description=Blinker Challenge #{BlinkerVars.challenge_id}
+
+[Service]
+ExecStart=/bin/sh /opt/#{name}/start.sh
+WorkingDirectory=/opt/#{name}/
+KillMode=process
+Restart=always
+RestartSec=1
+StartLimitInterval=1
+StartLimitBurst=2
+User=challenge
+Group=nogroup
+
+[Install]
+WantedBy=multi-user.target
+Alias=#{name}.service
+EOF
+end
+
+deb_name name
+deb_user 'challenge'
+deb_group 'nogroup'
+deb_preinst <<EOF
+#!/bin/sh
+adduser --system challenge
+EOF
+deb_postinst <<EOF
+#!/bin/sh
+systemctl enable #{name}.service
+systemctl start #{name}.service
+EOF
+
+deb_archive "#{name}.deb" => ["opt/#{name}/chat.x", "opt/#{name}/flag", "opt/#{name}/start.sh", "lib/systemd/system/#{name}.service"]

@@ -1,0 +1,4 @@
+declare_flag 'flag{93d2f819-9ea42f44-aa8b4c0d-7fe824ec}'
+
+task :handout => 'riddleme.x'
+task :description => 'description.html.erb'

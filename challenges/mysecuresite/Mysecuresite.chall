@@ -1,0 +1,41 @@
+port = random_number 49152..65535
+flag = random_flag
+
+erb_binding :flag => flag
+erb_file 'server.rb' => 'server.rb.erb'
+
+network_capture 'attack.pcap' => ['browse.rb', 'server.rb', 'attack.rb'] do |c|
+  nhosts = random_number 8..12
+  server = 0
+  attacker = random_number (1...nhosts)
+
+  # just pick some random RFC1918 IPs to use
+  nonmask = (nhosts+2).to_s(2).length
+  baseip, basemask = [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16]].select { |_, mask| (32-mask) >= nonmask }.sample
+  baseip = IPAddr.new "#{baseip}/#{basemask}"
+  block = (0..(32-basemask-nonmask)).to_a.sample + nonmask
+  mask = 32 - block
+  ip = baseip.mask(mask) | (random_number(0...(1<<(mask-basemask))) << block)
+  server_ip = ip | 1
+  client_ips = (2...(1<<block)).to_a.sample(nhosts-1).map { |o| ip | o }
+  ips = [server_ip]+client_ips
+
+  c.capture_on = server
+  c.mask = mask
+  c.hosts = (0...nhosts).map { |i|
+    if i == server
+      command = "ruby server.rb -o #{server_ip.to_s} -p #{port}"
+    elsif i == attacker
+      command = "while ! nc -z #{server_ip.to_s} #{port}; do sleep 1; done; ruby attack.rb #{server_ip.to_s} #{port}"
+    else
+      command = "while ! nc -z #{server_ip.to_s} #{port}; do sleep 1; done; ruby browse.rb #{server_ip.to_s} #{port}"
+    end
+
+    { :ip => ips[i], :command => command }
+  }
+end
+
+tar_gz_archive 'attack.pcap.tgz' => 'attack.pcap'
+
+task :description => 'description.html.erb'
+task :handout => 'attack.pcap.tgz'

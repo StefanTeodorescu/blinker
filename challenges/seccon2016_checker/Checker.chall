@@ -1,0 +1,14 @@
+task :executable => 'checker'
+task :handout => 'checker'
+task :description => 'description.html.erb'
+
+generated_file 'description.html.erb' do
+  puts <<EOF
+<a href="<%= handout_url %>">This executable</a> is running on the server (port #{BlinkerVars.socat_port}). It will happily let you try and guess the flag. However, if 3.4e38 possibilities seem like a little too many, maybe you can try to do something more clever?
+EOF
+end
+
+c_flags :stack_protector => true, :relro => :full
+c_compiled 'checker' => 'checker.c'
+
+scenario 'stdio_socat'

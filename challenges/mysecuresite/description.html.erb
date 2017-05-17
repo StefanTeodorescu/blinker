@@ -1,0 +1,70 @@
+<h5> Original exercise </h5>
+
+There is a highly popular website on our intranet that displays a random ascii
+art image to visitors. Its real purpose, however, is to safeguard our secret,
+<i>the answer</i>, giving it away to admins only. This was working fine until
+today when we have discovered that someone has managed to compromise the system.
+This being our most critical piece of infrastructre, we of course have logs
+recorded of the incident. We believe <a href="<%= handout_url %>">this packet
+capture</a> has recorded the attack, but our analysts have failed to find any
+suspicious activity so far. Maybe you could do better?
+
+<h5> A write-up </h5>
+
+You have also come across the following brief writeup, from someone else who has
+solved this exercise. Use the information in it as you see fit.
+
+<pre>
+The secret information seemed to have been leaked to 192.168.45.77. Previously
+that host received a lot of 'invalid authentication' responses, interleaved with
+a few that were okay. It seems that the attacker was gradually making small
+changes to the cookie value returned by the server until they eventually managed
+to forge a cookie value that granted them admin privileges. Looking at some of
+the cookie values was revealing.
+
+Server:   2163a52cb34f9b9310073295a1a59b 88 d3d7cfef657653d9b2107e49c4a6990f4c724d5ca063f5af...
+Attacker: 2163a52cb34f9b9310073295a1a59b e8 d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b eb d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b ea d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b ed d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b ec d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b ef d3d7cfef657653d9b2107e49c4a6990f ---> invalid authentication
+Attacker: 2163a52cb34f9b9310073295a1a59b ee d3d7cfef657653d9b2107e49c4a6990f ---> no complaint from server
+
+The data is probably hex encoded. The attacker truncates it to 32 bytes, and
+keeps chaning byte 15 until the server accepts the cookie. XORing the attempts
+with the original shows the following picture.
+
+Attacker: 000000000000000000000000000000 60 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 63 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 62 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 65 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 64 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 67 00000000000000000000000000000000 ---> invalid authentication
+Attacker: 000000000000000000000000000000 66 00000000000000000000000000000000 ---> no complaint from server
+
+After the attacker has gained the desired information from these bytes, they go
+on to probe the previous bytes, eventually always succeeding.
+
+0000000000000000000000000000 6365 00000000000000000000000000000000
+00000000000000000000000000 6f6264 00000000000000000000000000000000
+000000000000000000000000 62686563 00000000000000000000000000000000
+
+Once the attacker is done with the first 16 bytes, they switch to a different
+chunk of the original cookie value, and probe the first 16 bytes again, until
+finally the whole cookie value has been covered. All of this sounds very much
+like a padding oracle attack carried out against a block cipher (of width 16
+bytes) used in cipher block chaining mode.
+
+To verify that theory, I attempted to recover the last few bytes of the first
+block (after the IV) shown above. The fact that byte 15 keeps changing
+(predictably) for each byte position being probed suggests that PKCS#7 padding
+is being used. Therefore the cookie XORed with the 0x66 mask above could only
+have yielded a valid padding if the plaintext byte b XORed with 0x66 was equal
+to 0x01, so b = 0x67. This makes sense, since then the 0x6365 mask would result
+in the last byte being decrypted to 0x02. Then the 14th plaintext byte, b' =
+0x63 ^ 0x02 = 0x61. So the four bytes shown above, when decrypted, give a
+portion of the plaintext cookie value, which reads "flag" in ASCII. This was a
+pretty good clue that I was on the right track, and indeed, after recovering the
+whole cookie this way, I got the flag.
+</pre>

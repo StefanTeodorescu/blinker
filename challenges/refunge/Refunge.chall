@@ -1,0 +1,70 @@
+require 'openssl'
+
+require 'blinker/framework/befunge'
+
+primes = []
+results = []
+modparts = []
+n = ''
+mod = 0
+
+loop {
+  # take that, birthday problem!
+  # 3 additional lines to eliminate an unrealistically small risk, way to go!
+  while primes.uniq.length < 4
+    primes = (1..4).map { OpenSSL::BN.generate_prime(32).to_i }
+  end
+
+  mod = primes.reduce(&:*)
+
+  n = random_hex(32).to_i(16) % mod
+  next unless n.to_s(16).length == 32
+
+  modparts = [0, 32, 64, 96].map { |s| (mod >> s) & 0xffffffff }
+
+  results = primes.map { |prime| n % prime }
+  break if results.all? { |r| r.to_s(16).length == 8 } # to avoid confusion about whether to zero-pad n in flag
+}
+
+puts "primes: #{primes.map(&:to_s).join(', ')}"
+puts "results: #{results.map(&:to_s).join(', ')}"
+puts "n: #{n}"
+puts "modparts: #{modparts.map(&:to_s).join(', ')}"
+
+flag = "flag{#{n.to_s(16).chars.each_slice(8).map(&:reverse).map(&:join).join('-')}}"
+declare_flag flag
+
+erb_binding primes: primes, results: results, modparts: modparts
+erb_file 'challenge.bef' => 'challenge.bef.erb'
+
+generated_file 'challenge.h' => 'challenge.bef' do
+  w, h, p = Blinker::Framework::Befunge.compile_ir(File.read('challenge.bef'))
+
+  p.chars.each_slice(w).map { |chars|
+    chars.map { |char|
+      if char.ord < 32 or char.ord > 127
+        "\\x%02x" % char.ord
+      elsif char == '\\' or char == '"'
+        "\\#{char}"
+      else
+        char
+      end
+    }.join
+  }.each { |line| puts "\"#{line}\"" }
+
+  puts "#define W #{w}"
+  puts "#define H #{h}"
+end
+
+c_flags :reorder_got_plt => true,
+        :reorder_plt => true,
+        :randomize_regs => true,
+        :randomize_branches => true,
+        :randomize_function_spacing => true,
+        :randomize_scheduling => true,
+        :reorder_functions => true,
+        :reorder_globals => true
+c_compiled 'riddleme.x' => ['riddleme.c', 'challenge.h']
+task :handout => 'riddleme.x'
+
+task :description => 'description.html.erb'

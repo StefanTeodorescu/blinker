@@ -1,0 +1,22 @@
+c_flags :reorder_got_plt => true,
+        :reorder_plt => true,
+        :randomize_regs => true,
+        :randomize_branches => true,
+        :randomize_function_spacing => true,
+        :randomize_scheduling => true,
+        :reorder_functions => true,
+        :reorder_globals => true,
+        :O => 1
+c_compiled 'maze.x' => 'maze.c'
+
+generated_file 'description.html.erb' do
+  puts <<EOF
+<a href="<%= handout_url %>">This game</a> is running on the server (port #{BlinkerVars.socat_port}). Escape the maze, get the flag!
+EOF
+end
+
+BlinkerVars.executable_args = '`cat flag`'
+
+task :description => 'description.html.erb'
+task :executable => 'maze.x'
+scenario 'stdio_socat'

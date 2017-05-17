@@ -1,0 +1,38 @@
+<h5> Original exercise </h5>
+
+Find the password to make this <a href="<%= handout_url %>">executable</a> happy.
+
+<h5> A write-up </h5>
+
+You have also come across the following brief writeup, from someone else who has
+solved this exercise. Use the information in it as you see fit.
+
+<pre>
+The executable is essentially a VM for some esoteric stack-based programming
+language. The actual program code is embedded in the executable as a string.
+During initialization it is copied to a different, mutable area as 32 bit
+values. The program counter appears to be two dimensional, and control flow can
+proceed left, right, up, or down.
+
+The embedded program seems to be structured so that the first row contains the
+meaningful instructions, while the rest are just for control flow between
+different parts of the code. There are a lot of repeated sequences, which looks
+as if function inlining were used extensively. The flag format appears to be
+flag{A-B-C-D} where each of A, B, C, and D represents a hexadecimal number,
+written in big endian notation. The numbers then go through a large amount of
+arithmetic, which seems to boil down to computing the remainder of N with
+several different moduli, where N = (A << 96) | (B << 64) | (C << 32) | D. These
+remainders are then compared to hardcoded values and the goal is to make all
+match.
+
+This gives a set of congruence relations for N as below.
+N = 661892816 (mod 3588318863)
+N = 398959860 (mod 4121105783)
+N = 2220064898 (mod 3973097039)
+N = 1060167851 (mod 4287099959)
+
+Noting that the moduli are actually all primes, we can use the Chinese Remainder
+Theorem to find a value of N that satisfies these. I used a CRT calculator I
+found on Google. The resulting N then has to be split up into A, B, C, and D
+components, which finally yield the flag.
+</pre>

@@ -1,0 +1,4 @@
+declare_flag 'flag{ad27cbf7a97d216030e0080e6f4883a5b3039ba073b2289dcb2f}'
+
+task :description => 'description.html.erb'
+task :handout => 'attack.pcap.tgz'

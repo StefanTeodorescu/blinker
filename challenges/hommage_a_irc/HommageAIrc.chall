@@ -1,0 +1,19 @@
+c_flags :reorder_got_plt => true,
+        :reorder_plt => true,
+        :randomize_regs => true,
+        :randomize_branches => true,
+        :randomize_function_spacing => true,
+        :randomize_scheduling => true,
+        :reorder_functions => true,
+        :reorder_globals => true,
+        :arch => :x86
+c_compiled 'chat.x' => 'chat.c'
+
+task :description => 'description.html.erb'
+task :executable => 'chat.x'
+
+deb_dependency 'libc6-i386'
+scenario 'socket_listen'
+
+erb_binding :port => lambda { BlinkerVars.listen_port }
+erb_file 'description.html.erb' => 'description.html.erb.erb'
