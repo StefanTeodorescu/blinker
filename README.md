@@ -16,3 +16,7 @@ from there. This will result in .deb files popping up in the working directory.
 
 The build script for each component is in the appropriate folder, and is called
 something like `package-blinker-foo.sh`.
+
+## License
+
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
