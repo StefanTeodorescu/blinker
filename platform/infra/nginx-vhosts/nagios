@@ -1,0 +1,60 @@
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+
+    ssl_certificate /etc/letsencrypt/live/prod-mgmt.help-gsx-get-his-degree.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/prod-mgmt.help-gsx-get-his-degree.com/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+
+    ssl_protocols TLSv1.2;
+    ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
+    ssl_prefer_server_ciphers on;
+
+    # HSTS (15768000 seconds = 6 months)
+    add_header Strict-Transport-Security max-age=15768000;
+
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    ssl_trusted_certificate /etc/ssl/certs/lets-encrypt-x3-cross-signed.pem;
+
+    gzip off;
+
+    server_name prod-mgmt.help-gsx-get-his-degree.com;
+    root /var/www;
+    index index.html index.php;
+
+    auth_basic "monitoring";
+    auth_basic_user_file /etc/nagios4/htpasswd.users;
+
+    location / {
+        return 301 /nagios;
+    }
+
+    location /nagios {
+        alias /usr/share/nagios4/share;
+        try_files $uri $uri/ =404;
+    }
+
+    location ~ ^/nagios/(.+\.php)$ {
+        alias /usr/share/nagios4/share;
+        try_files /$1 =404; # Needed also because of cgi.fix_pathinfo=1 in php.ini
+        fastcgi_pass unix:/run/php/php7.0-fpm.sock;
+        include /etc/nginx/fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root/$1;
+        fastcgi_param SCRIPT_NAME $1;
+    }
+
+    location ~ ^/nagios/cgi-bin/(.+\.cgi)$ {
+        root /usr/lib/nagios4/sbin;
+        try_files /$1 =404;
+        fastcgi_pass unix:/var/run/fcgiwrap.socket;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root/$1;
+        fastcgi_param SCRIPT_NAME $1;
+        fastcgi_param REMOTE_USER $remote_user;
+    }
+}
