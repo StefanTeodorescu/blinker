@@ -1,0 +1,315 @@
+- if @completed
+  %h1 Competition complete
+  %h3 Thank you for your help!
+  %p
+    If you have any questions or feedback, do not hesitate to contact me on
+    the email address below.
+  %h3 Statistics
+  %table.ctf-stats
+    %thead
+      %tr
+        %th Challenge
+        %th Minutes spent
+    %tbody
+      - @stats.each do |chall|
+        %tr
+          %td= chall['challenge']
+          %td
+            = chall['minutes']
+            - if chall['skipped']
+              %i (skipped)
+- else
+  .ctf
+    /ko if: queuePosition() != null
+    .alert.alert-info
+      The competition system is experiencing heavy load, and your request had to
+      be queued.
+
+      /ko if: queuePosition() == 0
+      However, you are the first in the queue, and will be served as soon as
+      possible.
+      //ko
+
+      /ko if: queuePosition() == 1
+      Currently, there is one other person in the queue ahead of you.
+      //ko
+
+      /ko if: queuePosition() >= 2
+      Currently, there are
+      %span{ :'data-bind' => 'text: queuePosition()' }
+      people in the queue ahead of you.
+      //ko
+
+      I apologise for the delay.
+    //ko
+
+    /ko if: generationFailed()
+    %h1 Exercise generation failed
+    %h3 Well, this is awkward.
+    %p
+      The system failed to generate the next exercise for you. I have been made
+      aware of the problem and will start investigating it as soon as possible.
+      Until this problem is fixed, you will not be able to continue the
+      competition. Meanwhile, I would be grateful if you could contact me on the
+      email address below. Sorry about the inconvenience!
+    //ko
+
+    /ko ifnot: generationFailed()
+
+    /ko if: communicationProblem()
+    .alert.alert-warning
+      It appears that the server cannot be reached. This page will keep trying
+      and update if the server is successfully contacted. Meanwhile you may want
+      to check you network connectivity.
+    //ko
+
+    /ko if: serverProblem()
+    .alert.alert-danger
+      The server responded with an error. I have been notified of the problem.
+      If waiting a little bit and refreshing does not solve your problem, please
+      contact me on the email address below.
+    //ko
+
+    /ko if: status() == 'loading'
+    .centered
+      %img{ :src => '/spinner.svg' }
+      %h3 Loading CTF, please wait...
+    //ko
+    /ko if: status() == 'ready' && !serverProblem()
+    %h1 CTF competition
+
+    %p
+      You will be asked to solve a number of small exercises in computer
+      security. Each exercise is focused at finding a specific weakness and
+      exploiting that to obtain a flag. A flag is a succint piece of text that
+      proves you have solved the exercise. To make them easily recognizable,
+      they always have the format
+      %code flag{something}
+      where
+      %code something
+      will usually be a big hexadecimal number. The word
+      %code flag
+      and the brackets should be included when submitting a flag.
+
+    %p
+      Some of the exercises require you to exploit a service running on a remote
+      server. These servers are virtual machines running in Microsoft Azure,
+      dedicated to this competition and are not shared between participants. For
+      this reason, you are allowed to carry out attacks against the explicitly
+      named services running on these machines. However, you are allowed that
+      only in relation to the named services running on the servers reserved for
+      your use.
+      %b
+        %u<
+          Attacking
+      or scanning
+      %b
+        %u<
+          any other service
+      or system, including but not limited to this website, virtual machines
+      belonging to other participants, systems managed by Cambridge University, or
+      Microsoft Azure
+      %b
+        %u<
+          is illegal
+      and as such, may cause criminal charges to be brought upon you. Even if an
+      activity is not against the law in itself, it might still be against the
+      acceptable use policies of your network provider, Microsoft Azure, or some
+      other party. Port scanning could be an example of this (in some
+      jurisdictions at least).
+
+    %p
+      Remember,
+      %b
+        %u<
+          at no point are you required to run any port scanners, or other automated
+          scanning tools
+      to solve any of the exercises. They will most likely not be of help anyway,
+      so please avoid them. Each virtual machine is also running an SSH daemon on
+      TCP port 22, which is not for participants' use and is never part of any of
+      the exercises. Attacking, scanning, or fingerprinting it is strictly
+      prohibited. Please also be aware that the servers have restrictions imposed
+      on their outgoing network traffic, so you will not be able to initiate any
+      connections towards the internet. None of the exercises would require you
+      to do this, and please do not attempt it.
+      %b
+        %u<
+          These servers are
+      provided to you only
+      %b
+        %u<
+          for hosting the exercises
+      as part of this competition, so please
+      %b
+        %u<
+          do not try to abuse them
+      for any other purpose.
+
+    %p
+      There will be six exercises in total. Please try to solve each as quickly
+      as you are able to. When you have submitted the correct flag for an
+      exercise, you will be given the opportunity to pause for a little and move
+      on to the next exercise when you are ready. These breaks will not count
+      when determining the winner of the prize for the fastest participant.
+
+    %p
+      Generally, you can spend as much time on each exercise and between
+      exercises as you see fit, but some exercises will have a countdown timer
+      displayed along with them. These always start counting down from 24 hours,
+      but may start before you first encounter the exercise. Please do not feel
+      alarmed by this, it is not in any way a suggestion as to how quickly the
+      exercise should be solved. You should aim to solve the exercise as soon as
+      you are able, but remember that no harm is done if you do not solve the
+      exercise before the countdown expires, you will simply be forced to move
+      on to the next exercise. This is a consequence of the fact that hosting
+      this competition costs me money, and therefore I must put an upper bound
+      on the charges I incur after each participant. Also for this reason, I
+      respectfully ask you to please avoid participating in the competition more
+      than once.
+
+    %p
+      For some exercises, you may be provided with a write-up. However, be
+      aware that these write-ups may not always be accurate, and that is
+      intentional.
+
+    %p
+      %b
+        By clicking the button below, you are confirming that you have read and
+        understood the information above, and will respect the rules outlined.
+
+    .centered
+      %button{ :'data-bind' => 'click: proceed' }
+        I am ready, give me the first exercise
+    //ko
+    /ko if: status() == 'started'
+
+    /ko if: challengePending()
+    .centered
+      %img{ :src => '/spinner.svg' }
+      %h3 Generating exercise, please wait...
+    //ko
+
+    /ko if: flagPending()
+    .centered
+      %img{ :src => '/spinner.svg' }
+      %h3 Verifying flag, please be patient...
+    //ko
+
+    /ko ifnot: challengePending() || flagPending()
+
+    %h1 CTF competition
+
+    /ko if: challengeDescription() == null
+
+    /ko if: actionFailed()
+    .alert.alert-danger
+      Failed to proceed to the next exercise. Please ensure you have network
+      connectivity, wait a little bit, refresh the page, and try again. If you
+      still have trouble, please contact me on the email address below.
+    //ko
+
+    /ko if: flagAccepted()
+    %h3 Nice work! Time for a break!
+    //ko
+
+    /ko ifnot: flagAccepted()
+    %h3 Time for a break!
+    //ko
+
+    %p
+      %span{ :'data-bind' => 'if: flagAccepted()' }
+        That was the right flag, congratulations!
+      The next exercise will start only when you click the button below. Feel
+      free to stand up, walk around a bit, or do whatever else you would like.
+
+    %button{ :'data-bind' => 'click: proceed' } Proceed to the next exercise
+    //ko
+
+    /ko if: challengeDescription() != null
+
+    /ko if: actionFailed()
+    .alert.alert-danger
+      Failed to
+      = succeed '.' do
+        %span{ :'data-bin' => 'text: actionRequested()' }
+      Please ensure you have network connectivity, wait a little bit, refresh
+      the page, and try again. If you still have trouble, please contact me on
+      the email address below.
+    //ko
+
+    /ko if: deadline() != null
+    %h4.countdown{ :'data-bind' => 'countdown: deadline()'}
+    //ko
+
+    /ko if: timeUp()
+    You will automatically proceed in a few seconds, but the next exercise
+    starts only after you have clicked a button. Feel free to have some rest!
+    //ko
+
+    /ko ifnot: timeUp()
+    %h4 Exercise description
+    %div
+      Use the following unique identifier to refer to this exercise if needed:
+      %span{ :'data-bind' => 'text: challengeId()' }
+    %span{ :'data-bind' => 'html: challengeDescription()' }
+
+    %h4 Got the flag?
+
+    .wrong_flag{ :'data-bind' => 'visible: flagRejected()' } Sorry, that is not the right flag.
+
+    %div{ :'data-bind' => 'visible: !disableActions()' }
+      %input{ :type => 'text', :placeholder => 'flag{...}', :'data-bind' => 'textInput: flagToSubmit' }
+      %button{ :'data-bind' => 'click: submitFlag' } Submit it!
+
+    /ko if: deployment() != null && !deploymentFailed()
+    %h4 Exercise server
+    The exercise is available on:
+    %span{ :'data-bind' => 'text: deployment()' }
+    //ko
+
+    /ko if: deployment() == null && deploymentDiagnostic() != null && !deploymentFailed()
+    %h4 Exercise server
+    %img{ :src => '/spinner2.svg' }
+    %span{ :'data-bind' => 'text: deploymentDiagnosticNice()' }
+    //ko
+
+    /ko if: deploymentFailed()
+    %h4.deployment_failed Exercise server
+    %span.deployment_failed
+      The system failed to deploy this exercise for you. I have been made aware
+      of the problem and will start investigating it as soon as possible.
+      Meanwhile, I would be grateful if you could contact me on the email
+      address below. Sorry about the inconvenience!
+    //ko
+
+    %h4 Had enough of this one?
+
+    .skip_challenge
+      If you would like to skip this exercise, you may do so. If the exercise is
+      insolvable for some reason, I would appreciate if you could also send me a
+      brief email with the details to the address below.
+
+    %button.skip_challenge{ :'data-bind' => 'click: skipChallenge, visible: !disableActions()' }
+      Skip this exercise
+
+    //ko
+
+    //ko
+
+    //ko
+
+    //ko
+
+    //ko
+
+    /ko if: status() == 'completed'
+    %h1 Competition complete
+    %h3 Thank you for your help!
+    %p
+      If you have any questions or feedback, do not hesitate to contact me on
+      the email address below.
+    //ko
+    %script{ :src => 'https://cdnjs.cloudflare.com/ajax/libs/knockout/3.3.0/knockout-min.js' }
+    %script{ :src => '/jquery.countdown/jquery.countdown.min.js' }
+    %script{ :src => '/countdown.js' }
+    %script{ :src => '/ctf.js' }

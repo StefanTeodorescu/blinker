@@ -1,0 +1,246 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2014-04-01-preview/deploymentTemplate.json",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "SSH RSA public key file of the administrator as a string"
+      }
+    },
+    "challengeId": {
+      "type": "string",
+      "metadata": {
+        "description": "Unique id assigned to the challenge by blinker"
+      }
+    },
+    "challengeDomain": {
+      "type": "string",
+      "metadata": {
+        "description": "The DNS zone under which a subdomain for the VM should be registered"
+      }
+    },
+    "provisionScript": {
+      "type": "string",
+      "metadata": {
+        "description": "A URL referring to a script to run on the VM after first boot"
+      }
+    }
+  },
+  "variables": {
+    "adminUsername": "blinker-admin",
+    "dnsLabelPrefix": "[concat('chall-', parameters('challengeId'),'--help-gsx-get-his-degree')]",
+    "imageOffer": "ubuntuserver",
+    "imagePublisher": "canonical",
+    "imageSku": "16.04.0-LTS",
+    "imageVersion": "latest",
+    "location": "[resourceGroup().location]",
+    "networkSecurityGroupName": "challenge-bootstrap-nsg",
+    "nicId": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]",
+    "nicName": "[concat('challenge-',parameters('challengeId'), '-nic')]",
+    "provisionScriptArray": "[string(skip(split(parameters('provisionScript'),'/'),sub(length(split(parameters('provisionScript'),'/')),1)))]",
+    "provisionScriptName": "[substring(variables('provisionScriptArray'), 1, sub(length(variables('provisionScriptArray')),2))]",
+    "publicIPAddressId": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIPAddressName'))]",
+    "publicIPAddressName": "[concat('challenge-',parameters('challengeId'), '-ip')]",
+    "publicIPAddressRef": "[concat('Microsoft.Network/publicIPAddresses/challenge-',parameters('challengeId'), '-ip')]",
+    "publicIPAddressType": "Dynamic",
+    "sshKeyPath": "[concat('/home/',variables('adminUsername'),'/.ssh/authorized_keys')]",
+    "storageAccountName": "[concat('challenge', uniqueString(deployment().name))]",
+    "subnetName": "challenge-bootstrap-subnet",
+    "subnetRef": "[concat(variables('virtualNetworkId'),'/subnets/',variables('subnetName'))]",
+    "virtualNetworkId": "[resourceId('Microsoft.Network/virtualNetworks', variables('virtualNetworkName'))]",
+    "virtualNetworkName": "challenge-vnet",
+    "virtualNetworkRef": "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+    "vmName": "[concat('challenge-',parameters('challengeId'))]",
+    "vmSize": "Basic_A0"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "sku": {
+        "name": "Standard_LRS",
+        "tier": "Standard"
+      },
+      "kind": "Storage",
+      "name": "[variables('storageAccountName')]",
+      "apiVersion": "2016-01-01",
+      "location": "[variables('location')]",
+      "tags": {
+        "ctf-challenge-id": "[parameters('challengeId')]"
+      },
+      "properties": {},
+      "resources": [],
+      "dependsOn": []
+    },
+    {
+      "apiVersion": "2016-10-01",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "location": "[variables('location')]",
+      "tags": {
+        "ctf-challenge-id": "[parameters('challengeId')]"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "[variables('publicIPAddressType')]",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('dnsLabelPrefix')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2016-10-01",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[variables('nicName')]",
+      "location": "[variables('location')]",
+      "tags": {
+        "ctf-challenge-id": "[parameters('challengeId')]"
+      },
+      "dependsOn": [
+        "[variables('publicIPAddressRef')]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "[variables('publicIPAddressType')]",
+              "publicIPAddress": {
+                "id": "[variables('publicIPAddressId')]"
+              },
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              }
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName'))]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2016-08-30",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[variables('vmName')]",
+      "location": "[variables('location')]",
+      "tags": {
+        "ctf-challenge-id": "[parameters('challengeId')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/', variables('nicName'))]",
+        "[concat('Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[variables('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('vmName')]",
+          "adminUsername": "[variables('adminUsername')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": "true",
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[variables('sshKeyPath')]",
+                  "keyData": "[parameters('sshKeyData')]"
+                }
+              ]
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
+            "sku": "[variables('imageSku')]",
+            "version": "[variables('imageVersion')]"
+          },
+          "osDisk": {
+            "name": "osdisk",
+            "vhd": {
+              "uri": "[concat('http://',variables('storageAccountName'),'.blob.core.windows.net/challenge-',parameters('challengeId'),'-vhds/osDisk1.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[variables('nicId')]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "true",
+            "storageUri": "[concat('http://',variables('storageAccountName'),'.blob.core.windows.net')]"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('challengeDomain'),'/',parameters('challengeId'))]",
+      "apiVersion": "2016-04-01",
+      "properties": {
+        "TTL": 60,
+        "CNAMERecord": {
+          "cname": "[reference(variables('publicIPAddressRef'), '2016-10-01').dnsSettings.fqdn]"
+        }
+      },
+      "dependsOn": [
+        "[variables('publicIPAddressRef')]"
+      ],
+      "resources": []
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "name": "[concat(variables('vmName'),'/',variables('vmName'),'-ps')]",
+      "apiVersion": "2016-03-30",
+      "location": "[variables('location')]",
+      "tags": {
+        "ctf-challenge-id": "[parameters('challengeId')]"
+      },
+      "properties": {
+        "publisher": "Microsoft.Azure.Extensions",
+        "type": "CustomScript",
+        "typeHandlerVersion": "2.0",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "fileUris": [
+            "[parameters('provisionScript')]"
+          ],
+          "commandToExecute": "[concat('bash ', variables('provisionScriptName'))]"
+        }
+      },
+      "resources": [],
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "fqdn": {
+        "value": "[concat(parameters('challengeId'),'.',parameters('challengeDomain'))]",
+        "type": "string"
+    },
+    "nic": {
+      "value": "[variables('nicName')]",
+      "type": "string"
+    },
+    "vnet": {
+      "value": "[variables('virtualNetworkName')]",
+      "type": "string"
+    },
+    "prod_subnet": {
+      "value": "challenge-prod-subnet",
+      "type": "string"
+    },
+    "bootstrap_subnet": {
+      "value": "[variables('subnetName')]",
+      "type": "string"
+    }
+  }
+}

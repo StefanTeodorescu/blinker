@@ -1,0 +1,22 @@
+environment: production
+bind: 127.0.0.1
+port: 4567
+survey_token:
+ctf_token:
+priv_db:
+  # https://deveiate.org/code/pg/PG/Connection.html#method-c-new
+  host:
+  dbname:
+  user:
+  password:
+anon_db:
+  host:
+  dbname:
+  user:
+  password:
+mail:
+  # https://github.com/benprew/pony
+  from: "noreply@dontknowyet"
+  reply_to: "contact@dontknowyet"
+exceptions_dir: /var/lib/blinker/exceptions
+allow_skip: true

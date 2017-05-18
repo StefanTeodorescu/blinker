@@ -22,6 +22,7 @@ GEM_LICENSE="$(gem specification "$GEM_PATH" license | head -n 1 | cut -b 5-)"
 GEM_VERSION="$(gem specification "$GEM_PATH" version | grep ': ' | awk -F': ' '{print $2}')"
 
 cp "$GEM_PATH" "$DIR/"
+mkdir "$DIR/empty"
 
 pushd "$DIR" &>/dev/null
 mkdir -p opt/installed-gems
@@ -60,6 +61,9 @@ while [[ "$#" != "0" ]]; do
         shift 2
     elif [[ "$1" == "--before-remove" || "$1" == "--pre-uninstall" ]]; then
         cat "$2" >> "$DIR/prerm"
+        shift 2
+    elif [[ "$1" == "--empty-directory" ]]; then
+        FPM_ARGS[${#FPM_ARGS[@]}]="$DIR/empty/=$2"
         shift 2
     else
         FPM_ARGS[${#FPM_ARGS[@]}]="$1"

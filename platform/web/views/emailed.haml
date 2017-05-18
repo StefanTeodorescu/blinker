@@ -1,0 +1,19 @@
+.row
+  .col-lg-10.col-lg-offset-1
+    %h2 Email sent
+    %p
+      An email was sent to the address you have provided. Please follow the
+      anonymous link in the email to participate in the
+      = succeed '.' do
+        = @genre
+    %small
+      Note that for privacy reasons, emails cannot be resent. If you have not
+      received your email, check your spam folder. You may also wish to
+      whitelist the following sender address:
+      = succeed '.' do
+        %i noreply@help-gsx-get-his-degree.com
+      If you have not received the email within 2 hours, please contact me on
+      the address below, or register again using a different email address. Also
+      for privacy reasons, you are not told whether this is the first time this
+      particular email address was used to request access to the study, but an
+      email is sent on the first attempt only.

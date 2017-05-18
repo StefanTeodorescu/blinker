@@ -1,0 +1,5 @@
+environment: production
+port: 8000
+upload_dir: /var/lib/blinker/handouts
+exceptions_dir: /var/lib/blinker/exceptions
+pubkey: /etc/blinker/package-signing.pub

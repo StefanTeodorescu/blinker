@@ -1,0 +1,79 @@
+.container
+  .row
+    .col-lg-10.col-lg-offset-1
+      - if defined? email_invalid and email_invalid
+        .alert.alert-danger
+          The email address provided looks incorrect, please check again.
+
+      %h1.centered Survey
+
+      %h3 Declaration of consent
+
+      %p
+        In this experiment, participants will be asked to answer questions about
+        their experience designing Capture-The-Flag style computer security
+        exercises, and their opinions on techniques designed to assist that
+        process. The goal of the survey is twofold. Firstly, to collect data
+        about the difficulties associated with designing such exercises, and
+        secondly, to gather feedback on the techniques I have developed. Both of
+        these will be used to evaluate the results of my (Gábor's) work, and to
+        help justify claims made in my (Gábor's) dissertation.
+      %p
+        To achieve these goals, the system will record any answers submitted
+        through the survey. Partial answers are temporarily stored on the
+        participant's computer even without explicitly having saved them in
+        order to allow the system to cope with network failures without data
+        loss. These partial answers are deleted once the participant has
+        submitted their answers to the survey. All recorded data are stored
+        under a randomly chosen anonymous identifier until they are no longer
+        necessary or at the latest until 1st July 2017, when they will be
+        erased. Aggregate information based on the recorded data or small
+        samples of anonymous data may be conserved indefinitely for the purpose
+        of inclusion in my (Gábor's) dissertation.
+      %p
+        The study is fundamentally anonymous. This means that all data
+        generated during the experiment are stored under the aforementioned
+        anonymous identifiers. However, an email address is requested below to
+        serve both as a means of verifying that participants have given their
+        consent and a way for me (Gábor) to contact individual participants,
+        should the need arise. Therefore, a mapping between anonymous
+        participant identifiers and email addresses is also stored. However,
+        no personally identifiable information will be published at any point.
+      %p
+        If a participant desires a higher degree of privacy, they may use a
+        freshly registered email address (e.g. from Google) instead of one of
+        their well known addresses, but they are requested to check their
+        emails regularly until at least 1st July 2017. The system also uses
+        technical measures to ensure that only I (Gábor) can access the data
+        stored. Specifically, the email addresses are stored in a separate
+        database, to which the automated system only has write access.
+        However, it should be noted that no system is perfectly secure and
+        despite the considerable effort invested into making this experiment
+        system safe, a data breach cannot be completely outruled.
+      %p
+        Participants may abort the experiment at any point without
+        justification. If they wish, they will be able to resume where they
+        left. They may also contact me (Gábor) for further clarification or
+        information at any point using the email address below. Participants may
+        request that all information stored in relation to them is deleted. Such
+        requests will be swiftly dealt with, but participants should note that
+        if by the time of their request the data in question was incorporated in
+        some aggregate, it may no longer be possible to completely remove all of
+        it.
+      %p
+        The infrastructure for the experiment is being hosted in Microsoft
+        Azure, in the 'West Europe' region, which is physically located in the
+        Netherlands according to Microsoft.
+      %p
+        %b
+          By typing your email address into the box below and clicking Accept,
+          you are confirming that you have read the information above, and now
+          give your informed consent to me collecting and processing information
+          about you as described above.
+
+      - if defined? email_invalid and email_invalid
+        .alert.alert-danger
+          The email address provided looks incorrect, please check again.
+      %form.centered{ :method => 'post' }
+        %input{ :type => 'email', :name => 'email', :placeholder => 'Email', :value => (defined? email) ? email : '' }
+        %input{ :type => 'submit', :value => 'Accept' }

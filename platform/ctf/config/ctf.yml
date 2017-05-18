@@ -1,0 +1,22 @@
+db:
+  # https://deveiate.org/code/pg/PG/Connection.html#method-c-new
+  host:
+  dbname:
+  user:
+  password:
+challenges_dir:
+filestore:
+  api:
+  public:
+aptly:
+  api:
+  challenges_repo:
+azure:
+  client_id:
+  client_secret:
+  tenant_id:
+  subscription_id:
+  resource_group:
+  challenge_domain:
+  ssh_key:
+  provision_script:

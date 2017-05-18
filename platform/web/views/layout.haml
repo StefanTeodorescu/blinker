@@ -1,0 +1,45 @@
+!!! 5
+%html{ :lang => 'en' }
+  %head
+    %meta{ :charset => 'utf-8' }
+    %meta{ :'http-equiv' => 'X-UA-Compatible', :content => 'IE=edge' }
+    %meta{ :name => 'viewport', :content => 'width=device-width, initial-scale=1' }
+    %meta{ :name => 'referrer', :content => 'never' }
+
+    %title
+      - if @title
+        = @title
+        \-
+      Help gsx Get His Degree
+
+    %link{ :href => '/bootstrap/css/bootstrap.min.css', :rel => 'stylesheet' }
+    %link{ :href => '/main.css', :rel => 'stylesheet' }
+    /[if le IE 9]
+      %script{ :src => 'https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js' }
+      %script{ :src => 'https://oss.maxcdn.com/respond/1.4.2/respond.min.js' }
+    %script{ :src => 'https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js' }
+    %script{ :src => '/bootstrap/js/bootstrap.min.js' }
+  %body
+    .container= yield
+    %footer
+      .container
+        .row
+          .col-lg-6
+            %h4 Who
+            %p
+              Gábor Szarka
+              %br
+              aka. gsx
+              %br
+              %i contact@help-gsx-get-his-degree.com
+
+          .col-lg-6
+            %h4 What
+            %p
+              This website exists to help me gather feedback on my work related
+              to the automatic generation of computer security exercises, which
+              I have carried out as part of Part II of the
+              = succeed '.' do
+                %a{ :href =>                                          |
+                  'http://www.cl.cam.ac.uk/admissions/undergraduate/' |
+                  } Computer Science Tripos                           |

@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+
+require 'blinker/ctf'
+require 'blinker/utils/config_file'
+
+unless ARGV.length == 1
+  puts "Usage: #{$0} job-type\n\nWhere job-type is one of:"
+  Blinker::Ctf::JOBS.each_key { |job| puts "\t* #{job}" }
+  exit 1
+end
+
+cfg = Blinker::Utils::ConfigFile.new 'ctf', default_path: File.join(__dir__, '../config.yml')
+
+job = Blinker::Ctf::JOBS[ARGV.first]
+
+unless job
+  puts "Unknown job type #{job}"
+  exit 1
+end
+
+job.new(cfg).run

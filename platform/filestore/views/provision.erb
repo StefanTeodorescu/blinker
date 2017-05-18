@@ -1,0 +1,13 @@
+#!/bin/bash -xe
+
+cat <<EOF | apt-key add -
+<%= pubkey %>
+EOF
+
+CHALLENGE_ID=`hostname | awk -F'-' '{ print $2 }'`
+echo "deb http://<%= ip %>:8080/challenges xenial main" > /etc/apt/sources.list.d/blinker.list
+apt-get update
+apt-get install -y "blinker-challenge-$CHALLENGE_ID"
+shred -u /etc/apt/sources.list.d/blinker.list
+apt-get update
+shred -u "`readlink -f "$0"`"
