@@ -1,0 +1,150 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "networkSecurityGroups_challenge_bootstrap_nsg_name": {
+            "defaultValue": "challenge-bootstrap-nsg",
+            "type": "String"
+        },
+        "networkSecurityGroups_challenge_prod_nsg_name": {
+            "defaultValue": "challenge-prod-nsg",
+            "type": "String"
+        },
+        "virtualNetworks_challenge_vnet_name": {
+            "defaultValue": "challenge-vnet",
+            "type": "String"
+        }
+    },
+    "variables": {
+        "location": "[resourceGroup().location]",
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[parameters('networkSecurityGroups_challenge_bootstrap_nsg_name')]",
+            "apiVersion": "2016-03-30",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "allow-mgmt-ssh",
+                        "properties": {
+                            "protocol": "TCP",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "22",
+                            "sourceAddressPrefix": "10.0.2.0/24",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 500,
+                            "direction": "Inbound"
+                        }
+                    }
+                ]
+            },
+            "resources": [],
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[parameters('networkSecurityGroups_challenge_prod_nsg_name')]",
+            "apiVersion": "2016-03-30",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "allow-mgmt-ssh",
+                        "properties": {
+                            "protocol": "TCP",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "22",
+                            "sourceAddressPrefix": "10.0.2.0/24",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 500,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "drop-inet-ssh",
+                        "properties": {
+                            "protocol": "TCP",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "22",
+                            "sourceAddressPrefix": "Internet",
+                            "destinationAddressPrefix": "*",
+                            "access": "Deny",
+                            "priority": 1000,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "allow-inet-other",
+                        "properties": {
+                            "protocol": "*",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "*",
+                            "sourceAddressPrefix": "Internet",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 1010,
+                            "direction": "Inbound"
+                        }
+                    },
+                    {
+                        "name": "drop-all-other",
+                        "properties": {
+                            "protocol": "*",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "*",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*",
+                            "access": "Deny",
+                            "priority": 1000,
+                            "direction": "Outbound"
+                        }
+                    }
+                ]
+            },
+            "resources": [],
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[parameters('virtualNetworks_challenge_vnet_name')]",
+            "apiVersion": "2016-03-30",
+            "location": "[variables('location')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "10.0.100.0/24"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "challenge-bootstrap-subnet",
+                        "properties": {
+                            "addressPrefix": "10.0.100.0/25",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroups_challenge_bootstrap_nsg_name'))]"
+                            }
+                        }
+                    },
+                    {
+                        "name": "challenge-prod-subnet",
+                        "properties": {
+                            "addressPrefix": "10.0.100.128/25",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroups_challenge_prod_nsg_name'))]"
+                            }
+                        }
+                    }
+                ]
+            },
+            "resources": [],
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroups_challenge_bootstrap_nsg_name'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroups_challenge_prod_nsg_name'))]"
+            ]
+        }
+    ]
+}
