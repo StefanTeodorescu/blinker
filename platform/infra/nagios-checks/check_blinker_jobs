@@ -1,0 +1,237 @@
+#!/bin/bash
+
+function help {
+    echo -e "$0 -H <host> -U <user> -d <database> [-P <password>] <check type>\n"
+    echo "Check types are: stuck-jobs, failed-jobs, queue-size, queue-delay"
+    echo "A password can also be supplied via .pgpass or the PGPASSWORD environment variable"
+}
+
+while [[ "$#" != "0" ]]; do
+    opt="$1"
+
+    case $opt in
+        -H|--host)
+            HOST="$2"
+            shift
+            ;;
+        -U|--user)
+            PGUSER="$2"
+            shift
+            ;;
+        -d|--database)
+            DATABASE="$2"
+            shift
+            ;;
+        -P|--password)
+            PASSWORD="$2"
+            shift
+            ;;
+        -h|--help)
+            help
+            exit
+            ;;
+        stuck-jobs|failed-jobs|queue-size|queue-delay)
+            CHECK_TYPE="$opt"
+            ;;
+        *)
+            echo "Unrecognized option '$1'"
+            exit 3
+            ;;
+    esac
+
+    shift
+done
+
+if [[ -z "$HOST" ]]; then
+    echo "host must be given"
+    exit 3
+fi
+
+if [[ -z "$PGUSER" ]]; then
+    echo "user must be given"
+    exit 3
+fi
+
+if [[ -z "$DATABASE" ]]; then
+    echo "database must be given"
+    exit 3
+fi
+
+if [[ -z "$CHECK_TYPE" ]]; then
+    echo "check type must be given"
+    exit 3
+fi
+
+if [[ ! -z ${PASSWORD+x} ]]; then
+    export PGPASSWORD="$PASSWORD"
+fi
+
+function sql_query {
+    local result
+    result="`timeout 5s psql -h "$HOST" -U "$PGUSER" -w -d "$DATABASE" -A -t -c "$1" 2>&1`"
+    local ret="$?"
+
+    case $ret in
+        0)
+            sql_result="$result"
+            ;;
+        2)
+            echo "CRITICAL - Failed to connect to database"
+            echo "$result"
+            exit 2
+            ;;
+        124)
+            echo "CRITICAL - Connection to database timed out"
+            exit 2
+            ;;
+        *)
+            echo "CRITICAL - Unexpected exit code from psql: $ret"
+            echo "$result"
+            exit 2
+            ;;
+    esac
+}
+
+case $CHECK_TYPE in
+    stuck-jobs)
+        sql_query "SELECT id, type, extract('epoch' from (now() - started_at)) as delay FROM ctf_jobs WHERE status = 'inprogress'"
+        state="OK"
+        echo -n "$sql_query" |
+            while IFS='|' read -r id type delay; do
+            case $type in
+                verify_flag|enforce_deadline|direct_ctf)
+                    warn="2"
+                    crit="5"
+                    ;;
+                generate_challenge)
+                    warn="60"
+                    crit="180"
+                    ;;
+                deploy_challenge)
+                    warn="600"
+                    crit="900"
+                    ;;
+                delete_deployment)
+                    warn="300"
+                    crit="600"
+                    ;;
+                *)
+                    echo "UNKNOWN - job type '$type' not recognized"
+                    exit 2
+                ;;
+            esac
+
+            ((sec=delay%60, min=delay/60))
+
+            if [[ "$delay" -gt "$crit" ]]; then
+                echo "CRITICAL - job #$id ($type) has been in progress for $min mins $sec secs"
+                exit 2
+            elif [[ "$delay" -gt "$warn" ]]; then
+                state="WARNING"
+                warning="WARNING - job #$id ($type) has been in progress for $min mins $sec secs"
+            fi;
+        done
+
+        if [[ -z "$warning" ]]; then
+            echo "OK - no excessive processing delays"
+            exit 0;
+        else
+            echo "$warning"
+            exit 1;
+        fi
+        ;;
+    failed-jobs)
+        sql_query "SELECT string_agg(distinct type::text, ', ') as types, date_trunc('second', MIN(finished_at)) as since, COUNT(id) as count FROM ctf_jobs WHERE status = 'failed';"
+        IFS='|' read -r types since count <<< "$sql_result"
+
+        if [[ "$count" == "0" ]]; then
+            echo "OK - no failed jobs"
+            exit 0
+        else
+            echo "CRITICAL - $count failed job(s) of type(s) $types (first at $since)"
+            exit 2
+        fi
+        ;;
+    queue-size)
+        sql_query "SELECT type, count(id) FROM ctf_jobs WHERE status='waiting' AND (not_before IS NULL OR not_before < now()) GROUP BY type;"
+        max=0
+        maxtype=""
+        summary=""
+        echo -n "$sql_query" |
+            while IFS='|' read -r type queued; do
+            summary="$summary, $type: $queued"
+            if [[ "$max" -lt "$queued" ]]; then
+                max="$queued"
+                maxtype="$type"
+            fi
+        done
+
+        summary="${summary:2}"
+
+        if [[ -z "$summary" ]]; then
+            summary="no jobs waiting in queue"
+        fi
+
+        if [[ "$max" -le "1" ]]; then
+            echo "OK - $summary"
+            exit 0
+        elif [[ "$max" -le "3" ]]; then
+            echo "WARNING - $max $maxtype jobs queued ($summary)"
+            exit 1
+        else
+            echo "CRITICAL - $max $maxtype jobs queued ($summary)"
+            exit 2
+        fi
+        ;;
+    queue-delay)
+        sql_query "SELECT type, max(extract('epoch' from (now() - coalesce(not_before, added_at)))) as delay FROM ctf_jobs WHERE status = 'waiting' AND (not_before IS NULL OR not_before < now()) GROUP BY type"
+        state="OK"
+        echo -n "$sql_query" |
+            while IFS='|' read -r type delay; do
+            case $type in
+                verify_flag|enforce_deadline|direct_ctf)
+                    warn="10"
+                    crit="30"
+                    ;;
+                generate_challenge)
+                    warn="60"
+                    crit="180"
+                    ;;
+                deploy_challenge)
+                    warn="300"
+                    crit="600"
+                    ;;
+                delete_deployment)
+                    warn="600"
+                    crit="900"
+                    ;;
+                *)
+                    echo "UNKNOWN - job type '$type' not recognized"
+                    exit 2
+                    ;;
+            esac
+
+            ((sec=delay%60, min=delay/60))
+
+            if [[ "$delay" -gt "$crit" ]]; then
+                echo "CRITICAL - job #$id ($type) has been in the queue for $min mins $sec secs"
+                exit 2
+            elif [[ "$delay" -gt "$warn" ]]; then
+                 state="WARNING"
+                 warning="WARNING - job #$id ($type) has been in the queue for $min mins $sec secs"
+            fi;
+        done
+
+        if [[ -z "$warning" ]]; then
+            echo "OK - no excessive queuing delays"
+            exit 0;
+        else
+            echo "$warning"
+            exit 1;
+        fi
+        ;;
+    *)
+        echo "Internal error, unknown check type '$CHECK_TYPE'"
+        exit 3
+        ;;
+esac

@@ -1,0 +1,81 @@
+#!/bin/bash
+
+function help {
+    echo -e "$0 -H <host> -U <user> -d <database> [-P <password>]\n"
+    echo "A password can also be supplied via .pgpass or the PGPASSWORD environment variable"
+}
+
+while [[ "$#" != "0" ]]; do
+    opt="$1"
+
+    case $opt in
+        -H|--host)
+        HOST="$2"
+        shift
+        ;;
+        -U|--user)
+        PGUSER="$2"
+        shift
+        ;;
+        -d|--database)
+        DATABASE="$2"
+        shift
+        ;;
+        -P|--password)
+        PASSWORD="$2"
+        shift
+        ;;
+        -h|--help)
+        help
+        exit
+        ;;
+        *)
+        echo "Unrecognized option '$1'"
+        exit 3
+        ;;
+    esac
+
+    shift
+done
+
+if [[ -z "$HOST" ]]; then
+    echo "host must be given"
+    exit 3
+fi
+
+if [[ -z "$PGUSER" ]]; then
+    echo "user must be given"
+    exit 3
+fi
+
+if [[ -z "$DATABASE" ]]; then
+    echo "database must be given"
+    exit 3
+fi
+
+if [[ ! -z ${PASSWORD+x} ]]; then
+    export PGPASSWORD="$PASSWORD"
+fi
+
+pgstat="`timeout 5s psql -h "$HOST" -U "$PGUSER" -w -d "$DATABASE" -A -t -c "SELECT substring(version() from '^(.+) on '), COUNT(*) as connection_count, (NOW()::timestamp(0) - pg_postmaster_start_time()::timestamp(0)) as uptime FROM pg_stat_activity;" 2>&1`"
+ret="$?"
+
+case $ret in
+     0)
+     echo -n "OK - "
+     echo "$pgstat" | awk -F'|' '{ print $1 " serving " $2 " connections, uptime: " $3 }'
+     exit 0
+     ;;
+     2)
+     echo -e "CRITICAL - Failed to connect\n$pgstat"
+     exit 2
+     ;;
+     124)
+     echo "CRITICAL - Timed out"
+     exit 2
+     ;;
+     *)
+     echo -e "CRITICAL - Unexpected exit code: $ret\n$pgstat"
+     exit 2
+     ;;
+esac

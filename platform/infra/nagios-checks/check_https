@@ -1,0 +1,93 @@
+#!/bin/bash
+
+function help {
+    echo -e "$0 -H <host> [-I <address>] [-u <path>]"
+}
+
+while [[ "$#" != "0" ]]; do
+    opt="$1"
+
+    case $opt in
+        -H|--host)
+        _HOST="$2"
+        shift
+        ;;
+        -I|--address)
+        _ADDRESS="$2"
+        shift
+        ;;
+        -u|--path)
+        _PATH="$2"
+        shift
+        ;;
+        -h|--help)
+        help
+        exit
+        ;;
+        *)
+        echo "Unrecognized option '$1'"
+        exit 3
+        ;;
+    esac
+
+    shift
+done
+
+if [[ -z "$_HOST" ]]; then
+    echo "host must be given"
+    exit 3
+fi
+
+if [[ -z "$_ADDRESS" ]]; then
+   _ADDRESS="$_HOST"
+fi
+
+if [[ -z "$_PATH" ]]; then
+   _PATH=""
+fi
+_PATH=${_PATH#/}
+
+ip="`getent hosts $_ADDRESS | awk '{ print $1 }'`"
+
+response="`curl --fail --resolve "$_HOST:443:$ip" -s -S -i "https://$_HOST/$_PATH" 2>&1`"
+ret="$?"
+
+case $ret in
+     0)
+     echo -n "OK - "
+     echo "$response" | head -n 1
+     exit 0
+     ;;
+     1|2|3|4)
+     echo "UNKNOWN - Unexpected exit code: $ret"
+     echo "$response"
+     exit 3
+     ;;
+     6)
+     echo "CRITICAL - failed to resolve host"
+     exit 2
+     ;;
+     7)
+     echo "CRITICAL - failed to connect"
+     exit 2
+     ;;
+     22)
+     echo -n "CRITICAL - response status indicates error: "
+     echo "$response" | awk -F': ' '{ print $3 }'
+     exit 2
+     ;;
+     28)
+     echo "CRITICAL - timeout"
+     exit 2
+     ;;
+     35|51)
+     echo "CRITICAL - SSL/TLS problem"
+     echo "$response"
+     exit 2
+     ;;
+     *)
+     echo "CRITICAL - Unexpected exit code: $ret"
+     echo "$response"
+     exit 2
+     ;;
+esac

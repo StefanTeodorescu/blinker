@@ -1,0 +1,82 @@
+#!/bin/bash
+
+function help {
+    echo "$0 -p <process>"
+}
+
+while [[ "$#" != "0" ]]; do
+    opt="$1"
+
+    case $opt in
+        -p|--process)
+        PROCESS="$2"
+        shift
+        ;;
+        -h|--help)
+        help
+        exit
+        ;;
+        *)
+        echo "Unrecognized option '$1'"
+        exit 3
+        ;;
+    esac
+
+    shift
+done
+
+if [[ -z "$PROCESS" ]]; then
+    echo "process must be given"
+    exit 3
+fi
+
+status="`sudo supervisorctl status`"
+ret="$?"
+
+if [[ "$ret" != "0" ]]; then
+    echo "CRITICAL - supervisorctl exited with code $ret"
+    echo "$status"
+    exit 2
+fi
+
+status="`echo "$status" | grep "$PROCESS"`"
+ret="$?"
+
+if [[ "$ret" != "0" ]]; then
+    echo "CRITICAL - process not known to supervisord"
+    exit 2
+fi
+
+status="`echo "$status" | sed -r 's/\s+/ /g'`"
+states="`echo "$status" | awk '{ print $2 }'`"
+
+for state in $states; do
+    case $state in
+        RUNNING)
+            ;;
+        STARTING|STOPPING)
+            echo "WARNING - Process changing state ($state)"
+            exit 1
+            ;;
+        STOPPED|EXITED)
+            echo "CRITICAL - Process not running ($state)"
+            exit 2
+            ;;
+        BACKOFF|FATAL)
+            echo "CRITICAL - Process failed to start ($state)"
+            exit 2
+            ;;
+        UNKNOWN)
+            echo "CRITICAL - Process state UNKNOWN"
+            exit 2
+            ;;
+        *)
+            echo -e "CRITICAL - Process state not recognized: $state"
+            exit 2
+            ;;
+    esac
+done
+
+echo "OK - all running"
+echo "$status"
+exit 0

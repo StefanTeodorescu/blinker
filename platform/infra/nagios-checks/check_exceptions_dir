@@ -1,0 +1,65 @@
+#!/bin/bash
+
+function help {
+    echo -e "$0 -d <directory> [-s <critical-seconds>] [-c <critical-count>]"
+}
+
+CRIT_SECONDS="360"
+CRIT_COUNT="3"
+
+while [[ "$#" != "0" ]]; do
+    opt="$1"
+
+    case $opt in
+        -d|--directory)
+        EXCEPTIONS_DIR="$2"
+        shift
+        ;;
+        -s|--critical-seconds)
+        CRIT_SECONDS="$2"
+        shift
+        ;;
+        -c|--critical-count)
+        CRIT_COUNT="$2"
+        shift
+        ;;
+        -h|--help)
+        help
+        exit
+        ;;
+        *)
+        echo "Unrecognized option '$1'"
+        exit 3
+        ;;
+    esac
+
+    shift
+done
+
+if [[ -z "$EXCEPTIONS_DIR" ]]; then
+    echo "directory must be given"
+    exit 3
+fi
+
+if [[ ! -d "$EXCEPTIONS_DIR" ]]; then
+    echo "exceptions directory '$EXCEPTIONS_DIR' does not exist"
+    exit 3
+fi
+
+count="`ls "$EXCEPTIONS_DIR" | wc -l`"
+
+if [[ "$count" == "0" ]]; then
+    echo "OK - no exceptions recorded"
+    exit 0
+fi
+
+threshold="`date +%s -d "$CRIT_SECONDS seconds ago"`"
+crits="`find $EXCEPTIONS_DIR -xtype f -newermt @$threshold | wc -l`"
+
+if [[ "$crits" -ge "$CRIT_COUNT" ]]; then
+    echo "CRITICAL - $crits exceptions recorded over the last $CRIT_SECONDS seconds ($count altogether)"
+    exit 2
+fi
+
+echo "WARNING - $count exceptions recorded ($crits over the last $CRIT_SECONDS seconds)"
+exit 1
