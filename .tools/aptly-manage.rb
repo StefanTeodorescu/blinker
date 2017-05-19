@@ -4,17 +4,6 @@ require 'json'
 require 'net/http'
 require 'uri'
 
-# HACK of the year...
-# this is used to work around an issue in rest-client
-# https://github.com/rest-client/rest-client/issues/441
-class UncloseableFile < File
-  alias :really_close :close
-
-  def close
-    rewind
-  end
-end
-
 if ARGV.first == 'clean' and ARGV.count == 4
   mode, host, port, repo = ARGV
 elsif ARGV.first == 'add' and ARGV.count == 5
@@ -82,7 +71,7 @@ if mode == 'clean'
         'DefaultComponent' => 'main'
       }
       resp = http.send_request('PUT', "/api/publish/#{repo}/xenial", '{"ForceOverwrite": true}', { 'Content-Type' => 'application/json' }).body
-      raise "unknown error (#{published})" unless JSON.parse(resp) == {
+      raise "unknown error (#{resp})" unless JSON.parse(resp) == {
         'Architectures' => ['amd64'],
         'Distribution' => 'xenial',
         'Label' => '',
@@ -101,10 +90,10 @@ if mode == 'clean'
   end
 elsif mode == 'add'
   begin
-    require 'rest-client'
+    require 'net/http/post/multipart'
   rescue LoadError
-    puts 'You will need the rest-client gem:'
-    puts 'gem install rest-client'
+    puts 'You will need the multipart-post gem:'
+    puts 'gem install multipart-post'
     exit 1
   end
 
@@ -121,52 +110,54 @@ elsif mode == 'add'
       response.return!
     end
   }
+  Net::HTTP.start(uri.host, uri.port) { |http|
+    begin
+      resp = File.open(deb) { |debfile|
+        http.request(Net::HTTP::Post::Multipart.new('/api/files/fs', 'file' => UploadIO.new(debfile, 'application/octet-stream', File.basename(deb)))).body
+      }
+      uploaded = JSON.parse(resp)
+      raise 'API error' unless uploaded.is_a? Array
+      raise "unknown error (#{resp})" unless uploaded.length == 1 and uploaded.first == "fs/#{File.basename(deb)}"
+      uploaded = uploaded.first
+    rescue => e
+      puts "Failed to upload file: #{e.message}"
+      puts e.backtrace
+      exit 1
+    end
 
-  begin
-    file = UncloseableFile.new(deb)
-    resp = RestClient.post(base+'/api/files/fs', file: file, &r)
-    uploaded = JSON.parse(resp)
-    raise 'API error' unless uploaded.is_a? Array
-    raise "unknown error (#{resp})" unless uploaded.length == 1 and uploaded.first == "fs/#{File.basename(deb)}"
-    uploaded = uploaded.first
-    file.really_close
-  rescue => e
-    puts "Failed to upload file: #{e.message}"
-    exit 1
-  end
+    puts 'Uploaded'
 
-  puts 'Uploaded'
+    begin
+      resp = http.post2("/api/repos/#{repo}/file/#{uploaded}?forceReplace=1",'').body
+      added = JSON.parse(resp)
+      raise 'API error' unless added.is_a? Hash and added['FailedFiles'].is_a? Array
+      raise "unknown error (#{resp})" unless added['FailedFiles'].empty?
+    rescue => e
+      puts "Failed to add package to repo: #{e.message}"
+      exit 1
+    end
 
-  begin
-    resp = RestClient.post(base+"/api/repos/#{repo}/file/#{uploaded}?forceReplace=1",'', &r)
-    added = JSON.parse(resp)
-    raise 'API error' unless added.is_a? Hash and added['FailedFiles'].is_a? Array
-    raise "unknown error (#{resp})" unless added['FailedFiles'].empty?
-  rescue => e
-    puts "Failed to add package to repo: #{e.message}"
-    exit 1
-  end
+    puts 'Added to repo'
 
-  puts 'Added to repo'
-
-  begin
-    resp = RestClient.put(base+"/api/publish/#{repo}/xenial", {'ForceOverwrite' => true}.to_json, content_type: :json, &r)
-    published = JSON.parse(resp)
-    raise "unknown error (#{resp})" unless published == {
-      'Architectures' => ['amd64'],
-      'Distribution' => 'xenial',
-      'Label' => '',
-      'Origin' => '',
-      'Prefix' => repo,
-      'SkipContents' => false,
-      'SourceKind' => 'local',
-      'Sources' => [{'Component' => 'main', 'Name' => repo}],
-      'Storage' => ''
-    }
-  rescue => e
-    puts "Failed to publish repo: #{e.message}"
-    exit 1
-  end
+    begin
+      resp = http.send_request('PUT', "/api/publish/#{repo}/xenial", {'ForceOverwrite' => true}.to_json, { 'Content-Type' => 'application/json' }).body
+      published = JSON.parse(resp)
+      raise "unknown error (#{resp})" unless published == {
+        'Architectures' => ['amd64'],
+        'Distribution' => 'xenial',
+        'Label' => '',
+        'Origin' => '',
+        'Prefix' => repo,
+        'SkipContents' => false,
+        'SourceKind' => 'local',
+        'Sources' => [{'Component' => 'main', 'Name' => repo}],
+        'Storage' => ''
+      }
+    rescue => e
+      puts "Failed to publish repo: #{e.message}"
+      exit 1
+    end
+  }
 
   puts 'Published'
 else
