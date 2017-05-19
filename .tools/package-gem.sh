@@ -20,6 +20,7 @@ GEM_SUMMARY="$(gem specification "$GEM_PATH" summary | head -n 1 | cut -b 5-)"
 GEM_AUTHOR="$(gem specification "$GEM_PATH" author | head -n 1 | cut -b 5-)"
 GEM_LICENSE="$(gem specification "$GEM_PATH" license | head -n 1 | cut -b 5-)"
 GEM_VERSION="$(gem specification "$GEM_PATH" version | grep ': ' | awk -F': ' '{print $2}')"
+GEM_HOMEPAGE="$(gem specification "$GEM_PATH" homepage | head -n 1 | cut -b 5-)"
 
 cp "$GEM_PATH" "$DIR/"
 mkdir "$DIR/empty"
@@ -79,6 +80,7 @@ fpm \
     -d ruby -d ruby-dev -d build-essential \
     -n "$GEM" --description "$GEM_SUMMARY" --version "$GEM_VERSION" \
     --vendor "$GEM_AUTHOR" --license "$GEM_LICENSE" \
+    --url "$GEM_HOMEPAGE" \
     --before-install "$DIR/preinst" --after-install "$DIR/postinst" \
     --before-remove "$DIR/prerm" --after-remove "$DIR/postrm" \
     "${FPM_ARGS[@]}" "${GEM_PATH}=opt/installed-gems/$FILE" |

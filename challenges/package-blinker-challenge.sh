@@ -30,6 +30,8 @@ cp -a "$CHALLENGE_DIR" usr/share/blinker/challenges
 fpm -t deb -s dir -n "blinker-challenge-$PKG_NAME" \
     --description "Blinker challenge: $NICE_NAME" \
     --version "$VERSION" \
+    --url 'https://gs509.user.srcf.net/blinker/' \
+    --vendor 'Gábor Szarka' \
     $DEPENDENCIES \
     usr/share/blinker/challenges |
 grep -v "Debian packaging tools generally labels all files"
