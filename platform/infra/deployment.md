@@ -18,7 +18,7 @@ Build all of the framework and the platform, and the challenges that will be use
 * &nbsp;
   ```
   for ch in {static_,}{re_normalize,amazing_rop,hommage_a_irc,mysecuresite,refunge,simple_bof}; do
-  /path/to/blinker/source/challenges/package-blinker-challenges.sh $ch
+  /path/to/blinker/source/challenges/package-blinker-challenge.sh $ch
   done
   ```
 * `cd llvm`
