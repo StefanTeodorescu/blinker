@@ -17,7 +17,7 @@ popd &>/dev/null
 fpm -C "$DIR" -t deb -s dir -n blinker-capgen \
     --log warn \
     --description "Blinker - tools for generating packet captures" \
-    --license 'BSD-3-Clause'
+    --license 'BSD-3-Clause' \
     --version "$VERSION" \
     -d mininet -d bridge-utils \
     -d chromium-browser -d chromium-chromedriver -d xvfb \
