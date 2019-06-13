@@ -31,8 +31,9 @@ status = challenges.generate ARGV.first, SecureRandom.hex(16), debug: debug
 case status[:status]
 when :done
   puts 'Challenge generation successful'
-  puts "Handout: #{File.join(status[:dir],status[:handout])}" if status[:handout]
-  puts "Deployable: #{File.join(status[:dir],status[:deploy])}" if status[:deploy]
+  #puts "Handout: #{File.join(status[:dir],status[:handout])}" if status[:handout]
+  #puts "Deployable: #{File.join(status[:dir],status[:deploy])}" if status[:deploy]
+  puts "Find the task here: #{status[:dir]}"
   puts "Flag: #{status[:flag]}"
 when :started
   puts 'Challenge generation was prematurely terminated without signaling an error condition'
